@@ -4,14 +4,14 @@ extern "C" NTSTATUS DriverEntry(
 	IN DRIVER_OBJECT* DriverObject,
 	IN UNICODE_STRING* RegistryPath
 ) {
+	KdPrint(("[KernelDriver] DriverEntry called\n"));
+
 	NTSTATUS status;
 	KernelDriverHealthContext = (KERNEL_DRIVER_HEALTH_CONTEXT*)ExAllocatePool2(
 		POOL_FLAG_NON_PAGED,
 		sizeof(KERNEL_DRIVER_HEALTH_CONTEXT),
 		MY_POOL_TAG
 	);
-
-	KdPrint(("[KernelDriver] DriverEntry called\n"));
 
 	KernelDriverHealthContext->LoadImageNotifyRoutineStatus = PsSetLoadImageNotifyRoutineEx(
 		LoadImageNotifyRoutine,
@@ -37,10 +37,10 @@ void LoadImageNotifyRoutine(
 	HANDLE ProcessId,
 	IMAGE_INFO* ImageInfo
 ) {
+	KdPrint(("[KernelDriver] LoadImageNotifyRoutine called\n"));
+	
 	UNREFERENCED_PARAMETER(ImageInfo);
 	UNREFERENCED_PARAMETER(ProcessId);
-
-	KdPrint(("[KernelDriver] LoadImageNotifyRoutine called\n"));
 	KdPrint(("[KernelDriver] FullImageName: %wZ\n", FullImageName));
 
 	return;
