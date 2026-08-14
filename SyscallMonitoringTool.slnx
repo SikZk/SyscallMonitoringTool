@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="KernelDriver/KernelDriver.vcxproj">
+    <Platform Project="x64" />
+    <Deploy />
+  </Project>
+  <Project Path="MonitoringDll/MonitoringDll.vcxproj" />
+</Solution>
