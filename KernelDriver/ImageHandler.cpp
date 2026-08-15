@@ -1,6 +1,5 @@
 #pragma once
 #include "ImageHandler.h"
-#include "WindowsUndocumentedKernelDefinitions.h"
 
 CONST UNICODE_STRING ntdllPath = RTL_CONSTANT_STRING(L"\\Windows\\System32\\ntdll.dll");
 CONST UNICODE_STRING kernel32Path = RTL_CONSTANT_STRING(L"\\Windows\\System32\\kernel32.dll");
@@ -20,6 +19,7 @@ BOOLEAN IsImageNtdll(IN UNICODE_STRING* ImageName, IN IMAGE_INFO* ImageInfo) {
 
 BOOLEAN IsImageKernel32(IN UNICODE_STRING* ImageName, IN IMAGE_INFO* ImageInfo) {
 	UNREFERENCED_PARAMETER(ImageInfo);
+
 	if (!CompareStringSuffix(ImageName, &kernel32Path)) {
 		return FALSE;
 	}

@@ -1,7 +1,10 @@
 #include "KernelDriver.h"
 #include "ImageHandler.h"
+#include "Apc.h"
 
-
+CONST UNICODE_STRING DllPath = RTL_CONSTANT_STRING(L"C:\\Users\\user\\Desktop\\HostStuff\\x64\\Debug\\MonitoringDll.dll");
+KERNEL_DRIVER_DATA* KernelDriverData = nullptr;
+KERNEL_DRIVER_HEALTH_CONTEXT* KernelDriverHealthContext = nullptr;
 extern "C" NTSTATUS DriverEntry(
 	IN DRIVER_OBJECT* DriverObject,
 	IN UNICODE_STRING* RegistryPath
@@ -25,7 +28,12 @@ extern "C" NTSTATUS DriverEntry(
 	return status;
 }
 
-NTSTATUS InitializeKernelDriverStructures() {
+NTSTATUS InitializeKernelDriverStructures()
+{
+	NTSTATUS Status;
+	PWCHAR   MonitoringDllPathBuffer = nullptr;
+	CONST USHORT MaxLen = DllPath.Length + sizeof(WCHAR);
+
 	KernelDriverHealthContext = (KERNEL_DRIVER_HEALTH_CONTEXT*)ExAllocatePool2(
 		POOL_FLAG_NON_PAGED,
 		sizeof(KERNEL_DRIVER_HEALTH_CONTEXT),
@@ -33,7 +41,8 @@ NTSTATUS InitializeKernelDriverStructures() {
 	);
 
 	if (KernelDriverHealthContext == nullptr) {
-		return STATUS_INSUFFICIENT_RESOURCES;
+		Status = STATUS_INSUFFICIENT_RESOURCES;
+		goto Cleanup;
 	}
 
 	KernelDriverData = (KERNEL_DRIVER_DATA*)ExAllocatePool2(
@@ -43,11 +52,47 @@ NTSTATUS InitializeKernelDriverStructures() {
 	);
 
 	if (KernelDriverData == nullptr) {
-		ExFreePool(KernelDriverHealthContext);
-		return STATUS_INSUFFICIENT_RESOURCES;
+		Status = STATUS_INSUFFICIENT_RESOURCES;
+		goto Cleanup;
 	}
 
+	MonitoringDllPathBuffer = (PWCHAR)ExAllocatePool2(
+		POOL_FLAG_NON_PAGED,
+		MaxLen,
+		MY_POOL_TAG
+	);
+
+	if (MonitoringDllPathBuffer == nullptr) {
+		Status = STATUS_INSUFFICIENT_RESOURCES;
+		goto Cleanup;
+	}
+	MonitoringDllPathBuffer[DllPath.Length / sizeof(WCHAR)] = L'\0';
+
+	RtlCopyMemory(MonitoringDllPathBuffer, DllPath.Buffer, DllPath.Length);
+
+	KernelDriverData->MonitoringDllPath.Buffer = MonitoringDllPathBuffer;
+	KernelDriverData->MonitoringDllPath.Length = DllPath.Length;
+	KernelDriverData->MonitoringDllPath.MaximumLength = MaxLen;
+
 	return STATUS_SUCCESS;
+
+Cleanup:
+	FreeKernelDriverStructures();
+	return Status;
+}
+
+void FreeKernelDriverStructures()
+{
+	if (KernelDriverData != nullptr) {
+		if (KernelDriverData->MonitoringDllPath.Buffer != nullptr)
+			ExFreePool2(KernelDriverData->MonitoringDllPath.Buffer, MY_POOL_TAG, nullptr, 0);
+		ExFreePool2(KernelDriverData, MY_POOL_TAG, nullptr, 0);
+		KernelDriverData = nullptr;
+	}
+	if (KernelDriverHealthContext != nullptr) {
+		ExFreePool2(KernelDriverHealthContext, MY_POOL_TAG, nullptr, 0);
+		KernelDriverHealthContext = nullptr;
+	}
 }
 
 void DriverUnload(PDRIVER_OBJECT DriverObject) {
@@ -58,6 +103,7 @@ void DriverUnload(PDRIVER_OBJECT DriverObject) {
 	}
 
 	ExFreePool(KernelDriverHealthContext);
+	ExFreePool(KernelDriverData->MonitoringDllPath.Buffer);
 	ExFreePool(KernelDriverData);
 	KdPrint(("[SyscallMonitoringTool]: Driver unloaded\n"));
 }
@@ -76,7 +122,6 @@ void LoadImageNotifyRoutine(
 	HANDLE ProcessId,
 	IMAGE_INFO* ImageInfo
 ) {	
-	UNREFERENCED_PARAMETER(ImageInfo);
 	UNREFERENCED_PARAMETER(ProcessId);
 
 	if (IsImageNtdll(FullImageName, ImageInfo)) {
@@ -84,9 +129,7 @@ void LoadImageNotifyRoutine(
 			return;
 		}
 
-		KdPrint(("[SyscallMonitoringTool] Ntdll: %wZ\n", FullImageName));
-
-		void* ldrLoadDllAddress = GetLdrLoadDllAddressFromNtdll(FullImageName, ImageInfo);
+		void* ldrLoadDllAddress = GetLdrLoadDllAddressFromNtdll(ImageInfo->ImageBase, ImageInfo);
 		if (ldrLoadDllAddress == nullptr) {
 			KdPrint(("[SyscallMonitoringTool] Failed to get LdrLoadDll address from Ntdll: %wZ\n", FullImageName));
 			return;
@@ -97,7 +140,17 @@ void LoadImageNotifyRoutine(
 	}
 
 	if (IsImageKernel32(FullImageName, ImageInfo)) {
-		KdPrint(("[SyscallMonitoringTool] Kernel32: %wZ\n", FullImageName));
+		if (CanInjectIntoTheProcess(PsGetCurrentProcess())) {
+			return;
+		}
+		if (KernelDriverData->LdrLoadDllAddress == nullptr) {
+			return;
+		}
+		KdPrint(("[SyscallMonitoringTool] Injecting into process"));
+		NTSTATUS status = InjectMonitoringDllWithApc(KernelDriverData->LdrLoadDllAddress);
+		if (!NT_SUCCESS(status)) {
+			KdPrint(("[SyscallMonitoringTool] Dll injection with kernel APC failed"));
+		}
 	}
 
 

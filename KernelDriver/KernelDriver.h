@@ -8,11 +8,12 @@ struct KERNEL_DRIVER_HEALTH_CONTEXT {
 };
 
 struct KERNEL_DRIVER_DATA {
-	void* LdrLoadDllAddress;
+	void*	LdrLoadDllAddress;
+	UNICODE_STRING 	MonitoringDllPath;
 };
 
-KERNEL_DRIVER_HEALTH_CONTEXT* KernelDriverHealthContext;
-KERNEL_DRIVER_DATA* KernelDriverData;
+extern KERNEL_DRIVER_HEALTH_CONTEXT* KernelDriverHealthContext;
+extern KERNEL_DRIVER_DATA* KernelDriverData;
 
 void LoadImageNotifyRoutine(
 	UNICODE_STRING* FullImageName,
@@ -29,3 +30,5 @@ NTSTATUS GetDriverLoadHealthStatus(
 );
 
 NTSTATUS InitializeKernelDriverStructures();
+
+void FreeKernelDriverStructures();

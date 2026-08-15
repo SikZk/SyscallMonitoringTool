@@ -90,11 +90,13 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Apc.cpp" />
     <ClCompile Include="ImageHandler.cpp" />
     <ClCompile Include="KernelDriver.cpp" />
     <ClCompile Include="Utilities.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Apc.h" />
     <ClInclude Include="ImageHandler.h" />
     <ClInclude Include="KernelDriver.h" />
     <ClInclude Include="Utilities.h" />
