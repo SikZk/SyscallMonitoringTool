@@ -1,11 +1,9 @@
 #pragma once
 #include <ntifs.h>
-#include <ntimage.h>
-#include <ntddk.h>
 
 #define MY_POOL_TAG 'Drvk'
 
-typedef struct KERNEL_DRIVER_HEALTH_CONTEXT {
+struct KERNEL_DRIVER_HEALTH_CONTEXT {
 	NTSTATUS LoadImageNotifyRoutineStatus;
 };
 
@@ -17,4 +15,10 @@ void LoadImageNotifyRoutine(
 	IMAGE_INFO* ImageInfo
 );
 
-void MyDriverUnload(PDRIVER_OBJECT DriverObject);
+void DriverUnload(
+	PDRIVER_OBJECT DriverObject
+);
+
+NTSTATUS GetDriverLoadHealthStatus(
+	KERNEL_DRIVER_HEALTH_CONTEXT* HealthContext
+);

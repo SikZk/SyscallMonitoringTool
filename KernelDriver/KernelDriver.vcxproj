@@ -90,10 +90,14 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ImageHandler.cpp" />
     <ClCompile Include="KernelDriver.cpp" />
+    <ClCompile Include="Utilities.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ImageHandler.h" />
     <ClInclude Include="KernelDriver.h" />
+    <ClInclude Include="Utilities.h" />
     <ClInclude Include="WindowsUndocumentedKernelDefinitions.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

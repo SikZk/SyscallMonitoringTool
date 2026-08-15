@@ -7,5 +7,5 @@
     <Platform Project="x64" />
     <Deploy />
   </Project>
-  <Project Path="MonitoringDll/MonitoringDll.vcxproj" />
+  <Project Path="MonitoringDll/MonitoringDll.vcxproj" Id="d82b2e88-5c5e-4933-bf57-d5a0bb8072d9" />
 </Solution>
