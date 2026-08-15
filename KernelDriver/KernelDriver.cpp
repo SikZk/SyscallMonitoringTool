@@ -10,14 +10,9 @@ extern "C" NTSTATUS DriverEntry(
 	DriverObject->DriverUnload = DriverUnload;
 	UNREFERENCED_PARAMETER(RegistryPath);
 
-	KernelDriverHealthContext = (KERNEL_DRIVER_HEALTH_CONTEXT*)ExAllocatePool2(
-		POOL_FLAG_NON_PAGED,
-		sizeof(KERNEL_DRIVER_HEALTH_CONTEXT),
-		MY_POOL_TAG
-	);
-
-	if (KernelDriverHealthContext == nullptr) {
-		return STATUS_INSUFFICIENT_RESOURCES;
+	NTSTATUS initStatus = InitializeKernelDriverStructures();
+	if (!NT_SUCCESS(initStatus)) {
+		return initStatus;
 	}
 
 	KernelDriverHealthContext->LoadImageNotifyRoutineStatus = PsSetLoadImageNotifyRoutineEx(
@@ -30,7 +25,30 @@ extern "C" NTSTATUS DriverEntry(
 	return status;
 }
 
+NTSTATUS InitializeKernelDriverStructures() {
+	KernelDriverHealthContext = (KERNEL_DRIVER_HEALTH_CONTEXT*)ExAllocatePool2(
+		POOL_FLAG_NON_PAGED,
+		sizeof(KERNEL_DRIVER_HEALTH_CONTEXT),
+		MY_POOL_TAG
+	);
 
+	if (KernelDriverHealthContext == nullptr) {
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	KernelDriverData = (KERNEL_DRIVER_DATA*)ExAllocatePool2(
+		POOL_FLAG_NON_PAGED,
+		sizeof(KERNEL_DRIVER_DATA),
+		MY_POOL_TAG
+	);
+
+	if (KernelDriverData == nullptr) {
+		ExFreePool(KernelDriverHealthContext);
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	return STATUS_SUCCESS;
+}
 
 void DriverUnload(PDRIVER_OBJECT DriverObject) {
 	UNREFERENCED_PARAMETER(DriverObject);
@@ -40,10 +58,9 @@ void DriverUnload(PDRIVER_OBJECT DriverObject) {
 	}
 
 	ExFreePool(KernelDriverHealthContext);
+	ExFreePool(KernelDriverData);
 	KdPrint(("[SyscallMonitoringTool]: Driver unloaded\n"));
 }
-
-
 
 NTSTATUS GetDriverLoadHealthStatus(KERNEL_DRIVER_HEALTH_CONTEXT* HealthContext) {
 	NTSTATUS status = STATUS_SUCCESS;
@@ -54,20 +71,29 @@ NTSTATUS GetDriverLoadHealthStatus(KERNEL_DRIVER_HEALTH_CONTEXT* HealthContext) 
 	return status;
 }
 
-
-
 void LoadImageNotifyRoutine(
 	UNICODE_STRING* FullImageName,
 	HANDLE ProcessId,
 	IMAGE_INFO* ImageInfo
-) {
-	KdPrint(("[SyscallMonitoringTool] LoadImageNotifyRoutine, process ID: %p\n", ProcessId));
-	
+) {	
 	UNREFERENCED_PARAMETER(ImageInfo);
 	UNREFERENCED_PARAMETER(ProcessId);
 
 	if (IsImageNtdll(FullImageName, ImageInfo)) {
+		if (KernelDriverData->LdrLoadDllAddress != nullptr) {
+			return;
+		}
+
 		KdPrint(("[SyscallMonitoringTool] Ntdll: %wZ\n", FullImageName));
+
+		void* ldrLoadDllAddress = GetLdrLoadDllAddressFromNtdll(FullImageName, ImageInfo);
+		if (ldrLoadDllAddress == nullptr) {
+			KdPrint(("[SyscallMonitoringTool] Failed to get LdrLoadDll address from Ntdll: %wZ\n", FullImageName));
+			return;
+		}
+
+		KernelDriverData->LdrLoadDllAddress = ldrLoadDllAddress;
+		KdPrint(("[SyscallMonitoringTool] LdrLoadDll address: %p\n", ldrLoadDllAddress));
 	}
 
 	if (IsImageKernel32(FullImageName, ImageInfo)) {
