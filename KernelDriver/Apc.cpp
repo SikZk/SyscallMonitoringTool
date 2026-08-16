@@ -146,37 +146,9 @@ NTSTATUS ScheduleApcToRunInUserMode(void* shellcodeAddress, UNICODE_STRING* DllP
         DllPath
     );
 
-    PKAPC KernelApcToPutThreadInAlertableWait = (PKAPC)ExAllocatePool2(
-        POOL_FLAG_NON_PAGED,
-        sizeof(KAPC),
-        MY_POOL_TAG
-    );
-    if (KernelApcToPutThreadInAlertableWait == nullptr) {
-        ExFreePool2(UserModeApcToRunDllInjectionShellcode, MY_POOL_TAG, nullptr, 0);
-        Status = STATUS_INSUFFICIENT_RESOURCES;
-        goto Cleanup;
-    }
-
-    KeInitializeApc(
-        KernelApcToPutThreadInAlertableWait,
-        KeGetCurrentThread(),
-        OriginalApcEnvironment,
-        PutThreadInAlertableWait,
-        ApcInjectionRundownRoutine,
-        NULL,
-        KernelMode,
-        NULL
-    );
-
     if (!KeInsertQueueApc(UserModeApcToRunDllInjectionShellcode, nullptr, nullptr, IO_NO_INCREMENT)) {
         ExFreePool2(
             UserModeApcToRunDllInjectionShellcode,
-            MY_POOL_TAG,
-            nullptr,
-            0
-        );
-        ExFreePool2(
-            KernelApcToPutThreadInAlertableWait,
             MY_POOL_TAG,
             nullptr,
             0
@@ -185,17 +157,7 @@ NTSTATUS ScheduleApcToRunInUserMode(void* shellcodeAddress, UNICODE_STRING* DllP
         goto Cleanup;
     }
 
-    if (!KeInsertQueueApc(KernelApcToPutThreadInAlertableWait, nullptr, nullptr, IO_NO_INCREMENT)) {
-        ExFreePool2(
-            KernelApcToPutThreadInAlertableWait,
-            MY_POOL_TAG,
-            nullptr,
-            0
-        );
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    return Status;
+    goto Cleanup;
 
 Cleanup:
     {
@@ -208,28 +170,6 @@ Cleanup:
         );
     }
 	return Status;
-}
-
-void PutThreadInAlertableWait(
-    _In_ PKAPC Apc,
-    _Inout_ PKNORMAL_ROUTINE* NormalRoutine,
-    _Inout_ PVOID* NormalContext,
-    _Inout_ PVOID* SystemArgument1,
-    _Inout_ PVOID* SystemArgument2
-) {
-    UNREFERENCED_PARAMETER(NormalRoutine);
-    UNREFERENCED_PARAMETER(NormalContext);
-    UNREFERENCED_PARAMETER(SystemArgument1);
-    UNREFERENCED_PARAMETER(SystemArgument2);
-
-	KeTestAlertThread(UserMode);
-
-    ExFreePool2(
-        Apc,
-        MY_POOL_TAG,
-        NULL,
-        0
-    );
 }
 
 void ShellcodeApcKernelRoutine(

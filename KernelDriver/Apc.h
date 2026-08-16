@@ -13,14 +13,6 @@ NTSTATUS InjectMonitoringDllViaApc(void* LdrLoadDllAddress);
 
 NTSTATUS ScheduleApcToRunInUserMode(void* shellcodeAddress, UNICODE_STRING* DllPath);
 
-void PutThreadInAlertableWait(
-    _In_ PKAPC Apc,
-    _Inout_ PKNORMAL_ROUTINE* NormalRoutine,
-    _Inout_ PVOID* NormalContext,
-    _Inout_ PVOID* SystemArgument1,
-    _Inout_ PVOID* SystemArgument2
-);
-
 void ShellcodeApcKernelRoutine(
     _In_ PKAPC Apc,
     _Inout_ PKNORMAL_ROUTINE* NormalRoutine,
