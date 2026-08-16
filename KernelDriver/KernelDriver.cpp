@@ -5,6 +5,7 @@
 CONST UNICODE_STRING DllPath = RTL_CONSTANT_STRING(L"C:\\Users\\user\\Desktop\\HostStuff\\x64\\Debug\\MonitoringDll.dll");
 KERNEL_DRIVER_DATA* KernelDriverData = nullptr;
 KERNEL_DRIVER_HEALTH_CONTEXT* KernelDriverHealthContext = nullptr;
+
 extern "C" NTSTATUS DriverEntry(
 	IN DRIVER_OBJECT* DriverObject,
 	IN UNICODE_STRING* RegistryPath
@@ -17,6 +18,8 @@ extern "C" NTSTATUS DriverEntry(
 	if (!NT_SUCCESS(initStatus)) {
 		return initStatus;
 	}
+
+	KdPrint(("[SyscallMonitoringTool] MonitoringDllPath: %wZ", &KernelDriverData->MonitoringDllPath));
 
 	KernelDriverHealthContext->LoadImageNotifyRoutineStatus = PsSetLoadImageNotifyRoutineEx(
 		LoadImageNotifyRoutine,
@@ -140,14 +143,14 @@ void LoadImageNotifyRoutine(
 	}
 
 	if (IsImageKernel32(FullImageName, ImageInfo)) {
-		if (CanInjectIntoTheProcess(PsGetCurrentProcess())) {
+		if (!CanInjectIntoTheProcess(PsGetCurrentProcess())) {
 			return;
 		}
 		if (KernelDriverData->LdrLoadDllAddress == nullptr) {
 			return;
 		}
-		KdPrint(("[SyscallMonitoringTool] Injecting into process"));
-		NTSTATUS status = InjectMonitoringDllWithApc(KernelDriverData->LdrLoadDllAddress);
+		KdPrint(("[SyscallMonitoringTool] Injecting into process, with id: %d", PsGetCurrentProcessId()));
+		NTSTATUS status = InjectMonitoringDllViaApc(KernelDriverData->LdrLoadDllAddress);
 		if (!NT_SUCCESS(status)) {
 			KdPrint(("[SyscallMonitoringTool] Dll injection with kernel APC failed"));
 		}

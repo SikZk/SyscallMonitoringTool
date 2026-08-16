@@ -33,10 +33,6 @@ extern "C" {
         _In_ PEPROCESS
     );
 
-    NTKERNELAPI PVOID NTAPI PsGetProcessWow64Process(
-        _In_ PEPROCESS
-    );
-
     NTKERNELAPI NTSTATUS NTAPI ZwProtectVirtualMemory(
         _In_ HANDLE,
         _Inout_ PVOID*,

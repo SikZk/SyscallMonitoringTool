@@ -14,7 +14,22 @@ static CONST UCHAR ShellcodeForApcInjection[] = {
     0xC3                                            /* ret                  */
 };
 
-NTSTATUS InjectMonitoringDllWithApc(void* LdrLoadDllAddress) {
+NTSTATUS InjectMonitoringDllViaApc(void* LdrLoadDllAddress) {
+	void* LdrLoadDllAddressParams = nullptr;
+	void* injectedMemoryAddress = WriteShellcodeIntoProcessMemory(LdrLoadDllAddress, &LdrLoadDllAddressParams);
+	if (injectedMemoryAddress == nullptr) {
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	NTSTATUS status = ScheduleApcToRunInUserMode(injectedMemoryAddress, (UNICODE_STRING*)LdrLoadDllAddressParams);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+
+    return STATUS_SUCCESS;
+}
+
+void* WriteShellcodeIntoProcessMemory(IN void* LdrLoadDllAddress, OUT void** LdrLoadDllAddressParams) {
     CONST UNICODE_STRING* DllPath = &KernelDriverData->MonitoringDllPath;
     NTSTATUS Status;
     /*
@@ -43,7 +58,7 @@ NTSTATUS InjectMonitoringDllWithApc(void* LdrLoadDllAddress) {
         PAGE_READWRITE
     );
     if (!NT_SUCCESS(Status))
-        return Status;
+        return nullptr;
 
     UNICODE_STRING* UnicodeStringInProcessVirtualMemory = 
         (UNICODE_STRING*)((PUCHAR)AddressWithinProcessVirtualMemory + UnicodeStringOffset);
@@ -91,44 +106,8 @@ NTSTATUS InjectMonitoringDllWithApc(void* LdrLoadDllAddress) {
 
     if (!NT_SUCCESS(Status))
         goto Cleanup;
-
-    PKAPC Apc = (PKAPC)ExAllocatePool2(
-        POOL_FLAG_NON_PAGED,
-        sizeof(KAPC),
-        MY_POOL_TAG
-    );
-
-    if (Apc == NULL) {
-        Status = STATUS_INSUFFICIENT_RESOURCES;
-        goto Cleanup;
-    }
-
-    KeInitializeApc(
-        Apc,
-        KeGetCurrentThread(),
-        OriginalApcEnvironment,
-        UserApcKernelRoutine,
-        UserApcRundownRoutine,
-        (PKNORMAL_ROUTINE)AddressWithinProcessVirtualMemory,
-        UserMode,
-        UnicodeStringInProcessVirtualMemory
-    );
-
-    if (!KeInsertQueueApc(Apc, NULL, NULL, IO_NO_INCREMENT)) {
-        ExFreePool2(
-            Apc,
-            MY_POOL_TAG,
-            NULL,
-            0
-        );
-
-        Status = STATUS_UNSUCCESSFUL;
-        goto Cleanup;
-    }
-
-    KeTestAlertThread(UserMode);
-
-	return STATUS_SUCCESS;
+    *LdrLoadDllAddressParams = UnicodeStringInProcessVirtualMemory;
+	return AddressWithinProcessVirtualMemory;
 
 Cleanup:
     {
@@ -140,23 +119,110 @@ Cleanup:
             MEM_RELEASE
         );
     }
-    return Status;
+    return nullptr;
 }
 
-VOID UserApcKernelRoutine(
+NTSTATUS ScheduleApcToRunInUserMode(void* shellcodeAddress, UNICODE_STRING* DllPath) {
+	NTSTATUS Status = STATUS_SUCCESS;
+
+    PKAPC UserModeApcToRunDllInjectionShellcode = (PKAPC)ExAllocatePool2(
+        POOL_FLAG_NON_PAGED,
+        sizeof(KAPC),
+        MY_POOL_TAG
+    );
+    if (UserModeApcToRunDllInjectionShellcode == nullptr) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Cleanup;
+    }
+
+    KeInitializeApc(
+        UserModeApcToRunDllInjectionShellcode,
+        KeGetCurrentThread(),
+        OriginalApcEnvironment,
+        ShellcodeApcKernelRoutine,
+        ApcInjectionRundownRoutine,
+        (PKNORMAL_ROUTINE)shellcodeAddress,
+        UserMode,
+        DllPath
+    );
+
+    PKAPC KernelApcToPutThreadInAlertableWait = (PKAPC)ExAllocatePool2(
+        POOL_FLAG_NON_PAGED,
+        sizeof(KAPC),
+        MY_POOL_TAG
+    );
+    if (KernelApcToPutThreadInAlertableWait == nullptr) {
+        ExFreePool2(UserModeApcToRunDllInjectionShellcode, MY_POOL_TAG, nullptr, 0);
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Cleanup;
+    }
+
+    KeInitializeApc(
+        KernelApcToPutThreadInAlertableWait,
+        KeGetCurrentThread(),
+        OriginalApcEnvironment,
+        PutThreadInAlertableWait,
+        ApcInjectionRundownRoutine,
+        NULL,
+        KernelMode,
+        NULL
+    );
+
+    if (!KeInsertQueueApc(UserModeApcToRunDllInjectionShellcode, nullptr, nullptr, IO_NO_INCREMENT)) {
+        ExFreePool2(
+            UserModeApcToRunDllInjectionShellcode,
+            MY_POOL_TAG,
+            nullptr,
+            0
+        );
+        ExFreePool2(
+            KernelApcToPutThreadInAlertableWait,
+            MY_POOL_TAG,
+            nullptr,
+            0
+        );
+        Status = STATUS_UNSUCCESSFUL;
+        goto Cleanup;
+    }
+
+    if (!KeInsertQueueApc(KernelApcToPutThreadInAlertableWait, nullptr, nullptr, IO_NO_INCREMENT)) {
+        ExFreePool2(
+            KernelApcToPutThreadInAlertableWait,
+            MY_POOL_TAG,
+            nullptr,
+            0
+        );
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    return Status;
+
+Cleanup:
+    {
+        SIZE_T Zero = 0;
+        ZwFreeVirtualMemory(
+            ZwCurrentProcess(),
+            &shellcodeAddress,
+            &Zero,
+            MEM_RELEASE
+        );
+    }
+	return Status;
+}
+
+void PutThreadInAlertableWait(
     _In_ PKAPC Apc,
     _Inout_ PKNORMAL_ROUTINE* NormalRoutine,
     _Inout_ PVOID* NormalContext,
     _Inout_ PVOID* SystemArgument1,
     _Inout_ PVOID* SystemArgument2
 ) {
+    UNREFERENCED_PARAMETER(NormalRoutine);
     UNREFERENCED_PARAMETER(NormalContext);
     UNREFERENCED_PARAMETER(SystemArgument1);
     UNREFERENCED_PARAMETER(SystemArgument2);
 
-    if (*NormalRoutine == NULL) {
-        KdPrint(("[SyscallMonitoringTool] user APC cancelled, thread terminating\n"));
-    }
+	KeTestAlertThread(UserMode);
 
     ExFreePool2(
         Apc,
@@ -166,7 +232,30 @@ VOID UserApcKernelRoutine(
     );
 }
 
-void UserApcRundownRoutine(_In_ PKAPC Apc) {
+void ShellcodeApcKernelRoutine(
+    _In_ PKAPC Apc,
+    _Inout_ PKNORMAL_ROUTINE* NormalRoutine,
+    _Inout_ PVOID* NormalContext,
+    _Inout_ PVOID* SystemArgument1,
+    _Inout_ PVOID* SystemArgument2
+) {
+    UNREFERENCED_PARAMETER(NormalRoutine);
+    UNREFERENCED_PARAMETER(NormalContext);
+    UNREFERENCED_PARAMETER(SystemArgument1);
+    UNREFERENCED_PARAMETER(SystemArgument2);
+
+    if (*NormalRoutine == NULL) {
+        KdPrint(("[SyscallMonitoringTool] shellcode APC cancelled\n"));
+    }
+    ExFreePool2(
+        Apc,
+        MY_POOL_TAG,
+        NULL,
+        0
+    );
+}
+
+void ApcInjectionRundownRoutine(_In_ PKAPC Apc) {
     ExFreePool2(
         Apc,
         MY_POOL_TAG,
