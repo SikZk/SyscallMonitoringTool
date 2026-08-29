@@ -3,9 +3,11 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="dll_injector_test/dll_injector_test.vcxproj" Id="377a5cf5-8a2d-43a7-8682-4139e7ef354e" />
   <Project Path="KernelDriver/KernelDriver.vcxproj">
     <Platform Project="x64" />
     <Deploy />
   </Project>
   <Project Path="MonitoringDll/MonitoringDll.vcxproj" Id="d82b2e88-5c5e-4933-bf57-d5a0bb8072d9" />
+  <Project Path="target_test/target_test.vcxproj" Id="479458a3-9921-4733-b999-a0be9d522f8e" />
 </Solution>

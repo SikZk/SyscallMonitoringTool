@@ -33,7 +33,7 @@ void* GetLdrLoadDllAddressFromNtdll(IN void* NtdllAddress, IN IMAGE_INFO* ImageI
 
 	__try {
 		void* ntHeadersAddress = (PUCHAR)NtdllAddress + ((PIMAGE_DOS_HEADER)NtdllAddress)->e_lfanew;
-		PIMAGE_NT_HEADERS NtHeaders = (PIMAGE_NT_HEADERS)(ntHeadersAddress);
+		IMAGE_NT_HEADERS* NtHeaders = (IMAGE_NT_HEADERS*)(ntHeadersAddress);
 		
 		void* exportDirAddress = (PUCHAR)NtdllAddress + NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
 		PIMAGE_EXPORT_DIRECTORY exportDir = (PIMAGE_EXPORT_DIRECTORY)(exportDirAddress);
