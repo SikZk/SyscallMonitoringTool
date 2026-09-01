@@ -26,11 +26,76 @@ CONST UCHAR Padding[sizeof(PushRcxAndJmp)] = {
 	0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC  /* int3                 */
 };
 
+PVOID  NtdllAddress;
+ULONG  NtdllSize;
+HANDLE PipeHandle;
+HANDLE IocpHandle;
+
+ULONG WINAPI IocpThread() {
+	OVERLAPPED_ENTRY Entries[10] = { 0 };
+	ULONG            EntriesRemoved = 0;
+
+	while (GetQueuedCompletionStatusEx(IocpHandle, Entries, 10, &EntriesRemoved, INFINITE, FALSE))
+	{
+		for (ULONG Index = 0; Index < EntriesRemoved; Index++)
+		{
+			if (Entries[Index].lpOverlapped != 0)
+			{
+				HeapFree(GetProcessHeap(), 0, Entries[Index].lpOverlapped);
+			}
+		}
+	}
+
+	return 0;
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) {
-        InitializeSyscallHooks();
-    }
-    return TRUE;
+	switch (reason) {
+	case DLL_PROCESS_ATTACH:
+		BOOLEAN CanConnect;
+
+		CanConnect = WaitNamedPipeW(L"\\\\.\\pipe\\MonitoringSvc", 5 * 1000);
+		if (CanConnect == FALSE) {
+			break;
+		}
+
+		PipeHandle = CreateFileW(L"\\\\.\\pipe\\MonitoringSvc",
+			FILE_WRITE_DATA,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			0,
+			OPEN_EXISTING,
+			FILE_FLAG_OVERLAPPED,
+			0
+		);
+
+		if (PipeHandle == INVALID_HANDLE_VALUE) {
+			printf("[Dll] Could not connect to the service: %lu", GetLastError());
+			break;
+		}
+
+		IocpHandle = CreateIoCompletionPort(PipeHandle, 0, 0, 0);
+		if (IocpHandle == 0) {
+			printf("[Dll] Could not create IOCP: %lu", GetLastError());
+			CloseHandle(PipeHandle);
+			break;
+		}
+
+		if (CreateThread(0, 0, (LPTHREAD_START_ROUTINE)IocpThread, 0, 0, 0) == FALSE) {
+			CloseHandle(PipeHandle);
+			CloseHandle(IocpHandle);
+			printf("[Dll] Could not create worker thread: %lu", GetLastError());
+			break;
+		}
+
+		InitializeSyscallHooks();
+		
+		break;
+	case DLL_THREAD_ATTACH:
+	case DLL_THREAD_DETACH:
+	case DLL_PROCESS_DETACH:
+		break;
+	}
+
 }
 
 void InitializeSyscallHooks() {

@@ -4,3 +4,4 @@
 
 void InitializeSyscallHooks();
 void* FindNtdllPadding(IN void* NtdllAddress);
+ULONG WINAPI IocpThread();

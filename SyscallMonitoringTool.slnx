@@ -9,5 +9,6 @@
     <Deploy />
   </Project>
   <Project Path="MonitoringDll/MonitoringDll.vcxproj" Id="d82b2e88-5c5e-4933-bf57-d5a0bb8072d9" />
+  <Project Path="MonitoringService/MonitoringService.vcxproj" Id="5f714817-fc7d-4d94-9bf3-950a18e4f232" />
   <Project Path="target_test/target_test.vcxproj" Id="479458a3-9921-4733-b999-a0be9d522f8e" />
 </Solution>
