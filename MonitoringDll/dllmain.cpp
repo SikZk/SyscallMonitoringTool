@@ -54,12 +54,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 	case DLL_PROCESS_ATTACH:
 		BOOLEAN CanConnect;
 
-		CanConnect = WaitNamedPipeW(L"\\\\.\\pipe\\MonitoringSvc", 5 * 1000);
+		CanConnect = WaitNamedPipeW(L"\\\\.\\pipe\\MonitoringService", 5 * 1000);
 		if (CanConnect == FALSE) {
 			break;
 		}
 
-		PipeHandle = CreateFileW(L"\\\\.\\pipe\\MonitoringSvc",
+		PipeHandle = CreateFileW(L"\\\\.\\pipe\\MonitoringService",
 			FILE_WRITE_DATA,
 			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 			0,

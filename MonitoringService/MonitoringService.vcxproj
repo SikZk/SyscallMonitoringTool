@@ -139,9 +139,13 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="DllCommunication.cpp" />
+    <ClCompile Include="EventLog.cpp" />
     <ClCompile Include="MonitoringService.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="DllCommunication.h" />
+    <ClInclude Include="EventLog.h" />
     <ClInclude Include="MonitoringService.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
