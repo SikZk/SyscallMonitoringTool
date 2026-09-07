@@ -148,6 +148,12 @@
     <ClInclude Include="EventLog.h" />
     <ClInclude Include="MonitoringService.h" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="MonitoringSvc.mc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="serviceLogsCompilationCommands.txt" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

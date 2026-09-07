@@ -157,7 +157,7 @@ NTSTATUS ScheduleApcToRunInUserMode(void* shellcodeAddress, UNICODE_STRING* DllP
         goto Cleanup;
     }
 
-    goto Cleanup;
+    return Status;
 
 Cleanup:
     {

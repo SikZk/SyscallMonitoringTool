@@ -5,10 +5,11 @@ HANDLE EventLogHandle;
 BOOLEAN InitializeEventLog() {
 	EventLogHandle = RegisterEventSourceW(0, L"MonitoringService");
 
-	if (EventLogHandle == 0)
-	{
+	if (EventLogHandle == 0) {
+		OutputDebugStringA("[Svc] RegisterEventSource FAILED\n");
 		return FALSE;
 	}
+	OutputDebugStringA("[Svc] event log ready\n");
 	return TRUE;
 }
 
@@ -19,6 +20,7 @@ void DestroyEventLog() {
 }
 
 void LogSyscall(_In_ PSYSCALL_LOG Log) {
+	OutputDebugStringA("[Svc] LogSyscall called\n");
 	PCSTR Strings[6];
 
 	std::string Timestamp = std::to_string(Log->Timestamp);
@@ -42,5 +44,17 @@ void LogSyscall(_In_ PSYSCALL_LOG Log) {
 	Strings[4] = RetAddr.data();
 	Strings[5] = Params.data();
 
-	ReportEventA(EventLogHandle, 0, 1, SYSCALL_EVENT, 0, 6, 0, Strings, 0);
+	if (!ReportEventA(
+			EventLogHandle,
+			EVENTLOG_INFORMATION_TYPE,
+			1,
+			SYSCALL_EVENT,
+			0,
+			6,
+			0,
+			Strings,
+			0
+	)) {
+		OutputDebugStringA("[Svc] ReportEvent FAILED\n");
+	}
 }

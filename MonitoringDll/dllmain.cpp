@@ -50,15 +50,22 @@ ULONG WINAPI IocpThread() {
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
+	HMODULE Self;
+	GetModuleHandleExW(
+		GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+		(LPCWSTR)&DllMain,
+		&Self
+	);
+
 	switch (reason) {
 	case DLL_PROCESS_ATTACH:
 		BOOLEAN CanConnect;
-
+		OutputDebugStringA("[Dll] 1 enter\n");
 		CanConnect = WaitNamedPipeW(L"\\\\.\\pipe\\MonitoringService", 5 * 1000);
 		if (CanConnect == FALSE) {
 			break;
 		}
-
+		OutputDebugStringA("[Dll] 2 waited\n");
 		PipeHandle = CreateFileW(L"\\\\.\\pipe\\MonitoringService",
 			FILE_WRITE_DATA,
 			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -67,7 +74,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 			FILE_FLAG_OVERLAPPED,
 			0
 		);
-
+		OutputDebugStringA("[Dll] 3 opened\n");
 		if (PipeHandle == INVALID_HANDLE_VALUE) {
 			printf("[Dll] Could not connect to the service: %lu", GetLastError());
 			break;
@@ -79,27 +86,27 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 			CloseHandle(PipeHandle);
 			break;
 		}
-
+		OutputDebugStringA("[Dll] 4 iocp\n");
 		if (CreateThread(0, 0, (LPTHREAD_START_ROUTINE)IocpThread, 0, 0, 0) == FALSE) {
 			CloseHandle(PipeHandle);
 			CloseHandle(IocpHandle);
 			printf("[Dll] Could not create worker thread: %lu", GetLastError());
 			break;
 		}
-
+		OutputDebugStringA("[Dll] 5 thread\n");
 		InitializeSyscallHooks();
-		
+		OutputDebugStringA("[Dll] 6 hooks\n");
 		break;
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
 	case DLL_PROCESS_DETACH:
 		break;
 	}
-
+	return TRUE;
 }
 
 void InitializeSyscallHooks() {
-    void* NtdllAddress = GetModuleHandleW(L"ntdll.dll");
+    NtdllAddress = GetModuleHandleW(L"ntdll.dll");
 
 	if (!NtdllAddress) {
 		printf("[Dll] GetModuleHandleW could not find ntdll: %lu (WTF?)", GetLastError());
@@ -137,7 +144,6 @@ void InitializeSyscallHooks() {
 
 void* FindNtdllPadding(IN void* NtdllAddress) {
 	void* ntHeadersAddress; 
-	ULONG  NtdllSize;
 	IMAGE_NT_HEADERS* NtHeaders;
 
 	ntHeadersAddress = (PUCHAR)NtdllAddress + ((PIMAGE_DOS_HEADER)NtdllAddress)->e_lfanew;

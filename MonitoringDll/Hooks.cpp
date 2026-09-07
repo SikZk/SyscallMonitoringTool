@@ -27,12 +27,19 @@ NTSTATUS NtAllocateVirtualMemoryHook(
 		PageProtection
 	);
 	
-	if (ProcessHandle == NtCurrentProcess && !(PageProtection & PAGE_EXECUTE)) {
+	//
+	// Never trace on these two paths: they run on every allocation in every
+	// injected process, and OutputDebugString serializes system-wide on a
+	// single global mutex. Tracing here freezes the machine.
+	//
+	if (ProcessHandle == NtCurrentProcess && !(PageProtection & PAGE_EXECUTE_ANY)) {
 		return Status;
 	}
-	if ((PUCHAR)_ReturnAddress() - (PUCHAR)NtdllAddress < NtdllSize) {
+	if ((ULONG_PTR)((PUCHAR)_ReturnAddress() - (PUCHAR)NtdllAddress) < NtdllSize) {
 		return Status;
 	}
+
+	OutputDebugStringA("[Dll] After if\n");
 
 	PSYSCALL_LOG Log = (PSYSCALL_LOG)HeapAlloc(
 		GetProcessHeap(),
@@ -67,13 +74,11 @@ NTSTATUS NtAllocateVirtualMemoryHook(
 
 	GetSystemTimePreciseAsFileTime((LPFILETIME)&Telemetry->Timestamp);
 
-
-	ULONG BytesWritten;
 	WriteFile(
 		PipeHandle,
 		Telemetry,
 		sizeof(SYSCALL_TELEMETRY),
-		&BytesWritten,
+		NULL,
 		&Log->Overlapped
 	);
 
@@ -86,6 +91,7 @@ BOOLEAN HookSyscall(
 	ULONG	Index,
 	ULONG* Ssn
 ) {
+	// TODO Unhook on detach: keep the original 5 bytes you overwrite in HookSyscall, and restore them on DLL_PROCESS_DETACH. With pinning that only fires at process exit, but if a patch ever does outlive the module again you get a clean process.
 	UCHAR  JmpInstr[] = { 0xE9, 0x00, 0x00, 0x00, 0x00 };
 	PUCHAR Rip = (PUCHAR)(SyscallAddress)+0x8;
 	LONG   Offset = (LONG)((PaddingAddress + NUMBER_OF_HOOKS - Index) - Rip);

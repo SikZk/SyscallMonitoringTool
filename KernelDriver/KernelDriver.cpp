@@ -4,6 +4,7 @@
 
 //CONST UNICODE_STRING DllPath = RTL_CONSTANT_STRING(L"C:\\Windows\\System32\\MonitoringDll.dll");
 CONST UNICODE_STRING DllPath = RTL_CONSTANT_STRING(L"C:\\Users\\user\\Desktop\\HostStuff\\x64\\Debug\\MonitoringDll.dll");
+//CONST UNICODE_STRING DllPath = RTL_CONSTANT_STRING(L"C:\\Windows\\System32\\version.dll");
 KERNEL_DRIVER_DATA* KernelDriverData = nullptr;
 KERNEL_DRIVER_HEALTH_CONTEXT* KernelDriverHealthContext = nullptr;
 

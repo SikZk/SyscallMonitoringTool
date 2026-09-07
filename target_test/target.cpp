@@ -61,7 +61,7 @@ int main(void) {
             0,
             &RegionSize,
             MEM_COMMIT | MEM_RESERVE,
-            PAGE_READWRITE
+            PAGE_EXECUTE_READWRITE   // RWX: looks like a shellcode loader, so the hook logs it
         );
 
         if (!NT_SUCCESS(Status)) {

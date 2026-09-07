@@ -1,0 +1,8 @@
+mc.exe .\MonitoringSvc.mc
+
+rc.exe -r -fo MessageDll.res .\MonitoringSvc.rc
+
+link.exe /DLL /NOENTRY /MACHINE:X64 /OUT:MessageDll.dll .\MessageDll.res
+
+then on VM:
+New-EventLog -LogName "SyscallMonitoringTool" -Source "MonitoringService" -MessageResourceFile "C:\Users\user\Desktop\HostStuff\MonitoringService\MessageDll.dll"

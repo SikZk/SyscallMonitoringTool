@@ -18,10 +18,13 @@ void  PerformCleanup() {
 }
 
 void WINAPI ServiceControlHandler(DWORD dwControl) {
-    if (dwControl == SERVICE_CONTROL_SHUTDOWN) {
-        SetEvent(StopEvent);
+    if (dwControl == SERVICE_CONTROL_STOP || dwControl == SERVICE_CONTROL_SHUTDOWN) {
+        ServiceStatus.dwCurrentState     = SERVICE_STOP_PENDING;
+        ServiceStatus.dwControlsAccepted = 0;
+        ServiceStatus.dwWaitHint         = 5000;
+        SetServiceStatus(StatusHandle, &ServiceStatus);
 
-        PerformCleanup();
+        SetEvent(StopEvent);
     }
 }
 
@@ -32,10 +35,13 @@ VOID WINAPI ServiceMain(DWORD dwNumServicesArgs, LPWSTR* lpServiceArgVectors) {
         return;
     }
 
-    ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-    ServiceStatus.dwCurrentState = SERVICE_RUNNING;
+    ServiceStatus.dwServiceType  = SERVICE_WIN32_OWN_PROCESS;
+    ServiceStatus.dwCurrentState = SERVICE_START_PENDING;
+    ServiceStatus.dwWaitHint     = 10000;
 
     SetServiceStatus(StatusHandle, &ServiceStatus);
+
+    ServiceStatus.dwCurrentState = SERVICE_STOPPED;
 
     do
     {
@@ -54,23 +60,38 @@ VOID WINAPI ServiceMain(DWORD dwNumServicesArgs, LPWSTR* lpServiceArgVectors) {
             break;
         }
 
-        ServiceStatus.dwCurrentState = SERVICE_RUNNING;
+        ServiceStatus.dwCurrentState     = SERVICE_RUNNING;
+        ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+        ServiceStatus.dwWaitHint         = 0;
 
     } while (FALSE);
 
     SetServiceStatus(StatusHandle, &ServiceStatus);
+
     if (ServiceStatus.dwCurrentState != SERVICE_RUNNING) {
         PerformCleanup();
+        return;
     }
+
+    WaitForSingleObject(StopEvent, INFINITE);
+
+    PerformCleanup();
+
+    ServiceStatus.dwCurrentState     = SERVICE_STOPPED;
+    ServiceStatus.dwControlsAccepted = 0;
+    ServiceStatus.dwWaitHint         = 0;
+    SetServiceStatus(StatusHandle, &ServiceStatus);
 }
 
-VOID wmain(int argc, WCHAR* argv[]) {
+int wmain(int argc, WCHAR* argv[]) {
     SERVICE_TABLE_ENTRY DispatchTable[] =
     {
-        { (PWCHAR)ServiceName, (LPSERVICE_MAIN_FUNCTION)ServiceMain },
+        { (PWCHAR)ServiceName, ServiceMain },
         { 0, 0 }
     };
 
     StartServiceCtrlDispatcher(DispatchTable);
+
+    return 0;
 }
 
