@@ -9,7 +9,6 @@ BOOLEAN InitializeEventLog() {
 		OutputDebugStringA("[Svc] RegisterEventSource FAILED\n");
 		return FALSE;
 	}
-	OutputDebugStringA("[Svc] event log ready\n");
 	return TRUE;
 }
 
@@ -20,7 +19,6 @@ void DestroyEventLog() {
 }
 
 void LogSyscall(_In_ PSYSCALL_LOG Log) {
-	OutputDebugStringA("[Svc] LogSyscall called\n");
 	PCSTR Strings[6];
 
 	std::string Timestamp = std::to_string(Log->Timestamp);

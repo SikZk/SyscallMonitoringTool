@@ -27,19 +27,13 @@ NTSTATUS NtAllocateVirtualMemoryHook(
 		PageProtection
 	);
 	
-	//
-	// Never trace on these two paths: they run on every allocation in every
-	// injected process, and OutputDebugString serializes system-wide on a
-	// single global mutex. Tracing here freezes the machine.
-	//
 	if (ProcessHandle == NtCurrentProcess && !(PageProtection & PAGE_EXECUTE_ANY)) {
 		return Status;
 	}
-	if ((ULONG_PTR)((PUCHAR)_ReturnAddress() - (PUCHAR)NtdllAddress) < NtdllSize) {
+	PVOID   Caller = _ReturnAddress();
+	if ((ULONG_PTR)((PUCHAR)Caller - (PUCHAR)NtdllAddress) < NtdllSize) {
 		return Status;
 	}
-
-	OutputDebugStringA("[Dll] After if\n");
 
 	PSYSCALL_LOG Log = (PSYSCALL_LOG)HeapAlloc(
 		GetProcessHeap(),
@@ -70,18 +64,20 @@ NTSTATUS NtAllocateVirtualMemoryHook(
 
 	Telemetry->Parameters[4] = (PVOID)AllocationType;
 	Telemetry->Parameters[5] = (PVOID)PageProtection;
-	Telemetry->Caller = _ReturnAddress();
+	Telemetry->Caller = Caller;
 
 	GetSystemTimePreciseAsFileTime((LPFILETIME)&Telemetry->Timestamp);
 
-	WriteFile(
-		PipeHandle,
-		Telemetry,
-		sizeof(SYSCALL_TELEMETRY),
-		NULL,
-		&Log->Overlapped
-	);
+	if (!WriteFile(
+			PipeHandle,
+			Telemetry,
+			sizeof(SYSCALL_TELEMETRY),
+			NULL,
+			&Log->Overlapped
+		) && GetLastError() != ERROR_IO_PENDING) {
 
+		HeapFree(GetProcessHeap(), 0, Log);
+	}
 	return Status;
 }
 

@@ -60,12 +60,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 	switch (reason) {
 	case DLL_PROCESS_ATTACH:
 		BOOLEAN CanConnect;
-		OutputDebugStringA("[Dll] 1 enter\n");
 		CanConnect = WaitNamedPipeW(L"\\\\.\\pipe\\MonitoringService", 5 * 1000);
 		if (CanConnect == FALSE) {
 			break;
 		}
-		OutputDebugStringA("[Dll] 2 waited\n");
 		PipeHandle = CreateFileW(L"\\\\.\\pipe\\MonitoringService",
 			FILE_WRITE_DATA,
 			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -74,7 +72,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 			FILE_FLAG_OVERLAPPED,
 			0
 		);
-		OutputDebugStringA("[Dll] 3 opened\n");
 		if (PipeHandle == INVALID_HANDLE_VALUE) {
 			printf("[Dll] Could not connect to the service: %lu", GetLastError());
 			break;
@@ -86,16 +83,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 			CloseHandle(PipeHandle);
 			break;
 		}
-		OutputDebugStringA("[Dll] 4 iocp\n");
 		if (CreateThread(0, 0, (LPTHREAD_START_ROUTINE)IocpThread, 0, 0, 0) == FALSE) {
 			CloseHandle(PipeHandle);
 			CloseHandle(IocpHandle);
 			printf("[Dll] Could not create worker thread: %lu", GetLastError());
 			break;
 		}
-		OutputDebugStringA("[Dll] 5 thread\n");
 		InitializeSyscallHooks();
-		OutputDebugStringA("[Dll] 6 hooks\n");
 		break;
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
@@ -120,8 +114,6 @@ void InitializeSyscallHooks() {
 	}
 
 	*(PVOID*)(PushRcxAndJmp + 14) = HookThunk;
-
-	printf("[Dll] NtdllAddress: %p, PaddingAddress: %p\n", NtdllAddress, PaddingAddress);
 
 	SIZE_T  BytesWritten = 0;
 	BOOLEAN Result;
