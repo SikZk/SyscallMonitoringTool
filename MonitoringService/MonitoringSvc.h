@@ -48,3 +48,17 @@
 //
 #define SYSCALL_EVENT                    0x00000001L
 
+//
+// MessageId: HOOK_EVENT
+//
+// MessageText:
+//
+// Syscall: %1%n
+// Timestamp: %2%n
+// ProcessId: %3%n
+// ThreadId: %4%n
+// Callstack: %5%n
+// Parameters: %6
+//
+#define HOOK_EVENT                       0x00000002L
+

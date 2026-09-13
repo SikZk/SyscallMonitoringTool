@@ -1,6 +1,9 @@
 #include <windows.h>
+#include <winhttp.h>
+#include <winldap.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifndef NT_SUCCESS
 #define NT_SUCCESS(s) (((NTSTATUS)(s)) >= 0)
@@ -22,61 +25,354 @@ typedef NTSTATUS(NTAPI* PFN_NtFreeVirtualMemory)(
     ULONG       FreeType
     );
 
+// winhttp.h and winldap.h are included for the prototypes only. The operand of
+// decltype is unevaluated, so these do NOT reference the symbols and no import is
+// generated. Do not add winhttp.lib or wldap32.lib to the linker: a static import
+// would make the loader map those DLLs as part of this EXE import graph, before the
+// monitoring DLL is injected, and the LdrRegisterDllNotification callback would
+// never fire for them.
+using PFN_WinHttpOpen        = decltype(&WinHttpOpen);
+using PFN_WinHttpConnect     = decltype(&WinHttpConnect);
+using PFN_WinHttpCloseHandle = decltype(&WinHttpCloseHandle);
+
+using PFN_ldap_initW         = decltype(&ldap_initW);
+using PFN_ldap_connect       = decltype(&ldap_connect);
+using PFN_ldap_bind_sW       = decltype(&ldap_bind_sW);
+using PFN_ldap_unbind        = decltype(&ldap_unbind);
+
+static PFN_NtAllocateVirtualMemory NtAllocateVirtualMemory = nullptr;
+static PFN_NtFreeVirtualMemory     NtFreeVirtualMemory     = nullptr;
+
+static HMODULE                     WinHttpModule       = nullptr;
+static PFN_WinHttpOpen             pWinHttpOpen        = nullptr;
+static PFN_WinHttpConnect          pWinHttpConnect     = nullptr;
+static PFN_WinHttpCloseHandle      pWinHttpCloseHandle = nullptr;
+
+static HMODULE                     Wldap32Module       = nullptr;
+static PFN_ldap_initW              pldap_initW         = nullptr;
+static PFN_ldap_connect            pldap_connect       = nullptr;
+static PFN_ldap_bind_sW            pldap_bind_sW       = nullptr;
+static PFN_ldap_unbind             pldap_unbind        = nullptr;
+
+// An unhooked NtAllocateVirtualMemory starts with 4C 8B D1 B8 <ssn>; once the syscall
+// hook is in, byte +3 becomes E9 <rel32>. An unhooked WinHttpConnect starts with a
+// normal prologue; Detours replaces the first bytes with E9 or FF 25. Dumping the
+// first 16 bytes tells you at a glance whether the patch landed.
+static void PrintFirstBytes(const char* Name, void* Address) {
+    if (Address == nullptr) {
+        printf("[target] %-24s not resolved\n", Name);
+        return;
+    }
+
+    PUCHAR Bytes = (PUCHAR)Address;
+    printf("[target] %-24s @ %p:", Name, Address);
+
+    for (int Index = 0; Index < 16; Index++) {
+        printf(" %02X", Bytes[Index]);
+    }
+
+    printf("\n");
+}
+
+static BOOL ResolveNtdll(void) {
+    HMODULE Ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (Ntdll == nullptr) {
+        printf("[target] GetModuleHandleW(ntdll.dll) failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    NtAllocateVirtualMemory =
+        (PFN_NtAllocateVirtualMemory)GetProcAddress(Ntdll, "NtAllocateVirtualMemory");
+    NtFreeVirtualMemory =
+        (PFN_NtFreeVirtualMemory)GetProcAddress(Ntdll, "NtFreeVirtualMemory");
+
+    if (NtAllocateVirtualMemory == nullptr || NtFreeVirtualMemory == nullptr) {
+        printf("[target] GetProcAddress on ntdll failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    printf("[target] pid=%lu  ntdll=%p\n", GetCurrentProcessId(), (void*)Ntdll);
+    PrintFirstBytes("NtAllocateVirtualMemory", (void*)NtAllocateVirtualMemory);
+    return TRUE;
+}
+
+// Loaded on demand, so the load happens well after the monitoring DLL has attached
+// and registered its notification callback.
+static BOOL LoadWinHttp(void) {
+    if (WinHttpModule != nullptr) {
+        return TRUE;
+    }
+
+    printf("[target] LoadLibraryW(winhttp.dll)...\n");
+
+    WinHttpModule = LoadLibraryW(L"winhttp.dll");
+    if (WinHttpModule == nullptr) {
+        printf("[target] LoadLibraryW(winhttp.dll) failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    pWinHttpOpen        = (PFN_WinHttpOpen)GetProcAddress(WinHttpModule, "WinHttpOpen");
+    pWinHttpConnect     = (PFN_WinHttpConnect)GetProcAddress(WinHttpModule, "WinHttpConnect");
+    pWinHttpCloseHandle = (PFN_WinHttpCloseHandle)GetProcAddress(WinHttpModule, "WinHttpCloseHandle");
+
+    if (pWinHttpOpen == nullptr || pWinHttpConnect == nullptr || pWinHttpCloseHandle == nullptr) {
+        printf("[target] GetProcAddress on winhttp failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    printf("[target] winhttp.dll=%p\n", (void*)WinHttpModule);
+    PrintFirstBytes("WinHttpConnect", (void*)pWinHttpConnect);
+    return TRUE;
+}
+
+static BOOL LoadWldap32(void) {
+    if (Wldap32Module != nullptr) {
+        return TRUE;
+    }
+
+    printf("[target] LoadLibraryW(wldap32.dll)...\n");
+
+    Wldap32Module = LoadLibraryW(L"wldap32.dll");
+    if (Wldap32Module == nullptr) {
+        printf("[target] LoadLibraryW(wldap32.dll) failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    pldap_initW   = (PFN_ldap_initW)GetProcAddress(Wldap32Module, "ldap_initW");
+    pldap_connect = (PFN_ldap_connect)GetProcAddress(Wldap32Module, "ldap_connect");
+    pldap_bind_sW = (PFN_ldap_bind_sW)GetProcAddress(Wldap32Module, "ldap_bind_sW");
+    pldap_unbind  = (PFN_ldap_unbind)GetProcAddress(Wldap32Module, "ldap_unbind");
+
+    if (pldap_initW == nullptr || pldap_connect == nullptr ||
+        pldap_bind_sW == nullptr || pldap_unbind == nullptr) {
+        printf("[target] GetProcAddress on wldap32 failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    printf("[target] wldap32.dll=%p\n", (void*)Wldap32Module);
+    PrintFirstBytes("ldap_bind_sW", (void*)pldap_bind_sW);
+    return TRUE;
+}
+
+static void CallNtAllocateVirtualMemory(ULONG Iteration) {
+    // Size cycles 0x1000..0x8000 so each hooked call is identifiable and you can
+    // confirm the hook forwards RegionSize untouched.
+    PVOID  BaseAddress = nullptr;
+    SIZE_T RegionSize  = (SIZE_T)((Iteration % 8) + 1) * 0x1000;
+
+    printf("[target] calling NtAllocateVirtualMemory(RegionSize=0x%llX, PAGE_EXECUTE_READWRITE)...\n",
+        (unsigned long long)RegionSize);
+
+    NTSTATUS Status = NtAllocateVirtualMemory(
+        GetCurrentProcess(),
+        &BaseAddress,
+        0,
+        &RegionSize,
+        MEM_COMMIT | MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE   // RWX: looks like a shellcode loader, so the hook logs it
+    );
+
+    if (!NT_SUCCESS(Status)) {
+        printf("[target] NtAllocateVirtualMemory failed: 0x%08lX\n", (unsigned long)Status);
+        return;
+    }
+
+    printf("[target] ok: BaseAddress=%p RegionSize=0x%llX\n",
+        BaseAddress, (unsigned long long)RegionSize);
+
+    PVOID  FreeBase = BaseAddress;
+    SIZE_T FreeSize = 0;
+    NtFreeVirtualMemory(GetCurrentProcess(), &FreeBase, &FreeSize, MEM_RELEASE);
+}
+
+static void CallWinHttpConnect(ULONG Iteration) {
+    if (!LoadWinHttp()) {
+        return;
+    }
+
+    // WinHttpConnect only builds a connection handle. No DNS and no traffic happens
+    // until WinHttpSendRequest, so these names are safe to use offline. They are
+    // reserved TLDs (RFC 2606) and cycle so each hooked call is distinguishable.
+    static PCWSTR Servers[] = { L"example.com", L"updates.example.net", L"beacon.example.invalid" };
+
+    PCWSTR Server = Servers[Iteration % (sizeof(Servers) / sizeof(Servers[0]))];
+
+    HINTERNET Session = pWinHttpOpen(
+        L"SyscallMonitoringTool/1.0",
+        WINHTTP_ACCESS_TYPE_NO_PROXY,   // no proxy autodetect, so nothing touches the network
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0
+    );
+
+    if (Session == nullptr) {
+        printf("[target] WinHttpOpen failed: %lu\n", GetLastError());
+        return;
+    }
+
+    printf("[target] calling WinHttpConnect(%ws, %u)...\n", Server, INTERNET_DEFAULT_HTTPS_PORT);
+
+    HINTERNET Connection = pWinHttpConnect(Session, Server, INTERNET_DEFAULT_HTTPS_PORT, 0);
+
+    if (Connection == nullptr) {
+        printf("[target] WinHttpConnect failed: %lu\n", GetLastError());
+    }
+    else {
+        printf("[target] ok: Connection=%p\n", (void*)Connection);
+        pWinHttpCloseHandle(Connection);
+    }
+
+    pWinHttpCloseHandle(Session);
+}
+
+// Point this at a real DC if you have one. localhost is the default because nothing
+// listens on 389 there, so the TCP connect is refused immediately instead of timing
+// out - the bind still happens, which is all the hook needs to fire.
+static WCHAR LdapHost[] = L"localhost";
+
+static void CallLdapBindSW(ULONG Iteration) {
+    if (!LoadWldap32()) {
+        return;
+    }
+
+    // dn and cred are PWSTR/PWCHAR (non-const), so these must be mutable arrays, not
+    // string literals. Throwaway values - a cleartext LDAP_AUTH_SIMPLE bind is exactly
+    // the pattern the hook is meant to catch, and the third entry is an anonymous bind.
+    static WCHAR Dn0[]   = L"CN=test-user,DC=example,DC=com";
+    static WCHAR Dn1[]   = L"CN=svc-backup,DC=example,DC=com";
+    static WCHAR Cred0[] = L"not-a-real-password";
+
+    static PWSTR  Dns[]   = { Dn0,   Dn1,   nullptr };
+    static PWCHAR Creds[] = { Cred0, Cred0, nullptr };
+
+    SIZE_T Slot = Iteration % (sizeof(Dns) / sizeof(Dns[0]));
+    PWSTR  Dn   = Dns[Slot];
+    PWCHAR Cred = Creds[Slot];
+
+    LDAP* Session = pldap_initW(LdapHost, LDAP_PORT);
+    if (Session == nullptr) {
+        printf("[target] ldap_initW failed\n");
+        return;
+    }
+
+    // Bound the connect so an unreachable host cannot hang the test. The bind below
+    // runs either way - the hook fires on entry, not on success.
+    LDAP_TIMEVAL Timeout = { 2, 0 };
+    ULONG        Status  = pldap_connect(Session, &Timeout);
+
+    if (Status != LDAP_SUCCESS) {
+        printf("[target] ldap_connect: 0x%02lX (expected with no LDAP server)\n", Status);
+    }
+
+    printf("[target] calling ldap_bind_sW(%ws, dn=%ws, LDAP_AUTH_SIMPLE)...\n",
+        LdapHost, Dn != nullptr ? Dn : L"<anonymous>");
+
+    Status = pldap_bind_sW(Session, Dn, Cred, LDAP_AUTH_SIMPLE);
+
+    if (Status != LDAP_SUCCESS) {
+        printf("[target] ldap_bind_sW returned 0x%02lX%s\n", Status,
+            Status == LDAP_SERVER_DOWN ? " (LDAP_SERVER_DOWN)" : "");
+    }
+    else {
+        printf("[target] ok: bind succeeded\n");
+    }
+
+    pldap_unbind(Session);
+}
+
+static void PrintMenu(void) {
+    printf("\n");
+    printf("[target] ----------------------------------------\n");
+    printf("[target]  1) NtAllocateVirtualMemory  (RWX commit + release)\n");
+    printf("[target]  2) WinHttpConnect           (loads winhttp.dll on first use)\n");
+    printf("[target]  3) ldap_bind_sW             (loads wldap32.dll on first use)\n");
+    printf("[target]  4) Load winhttp.dll only    (fire the loader notification, call nothing)\n");
+    printf("[target]  5) Load wldap32.dll only    (fire the loader notification, call nothing)\n");
+    printf("[target]  6) Dump current function bytes\n");
+    printf("[target]  0) Exit\n");
+    printf("[target] ----------------------------------------\n");
+    printf("[target] choice: ");
+}
+
+// Returns the chosen number, -1 if stdin is gone, -2 if the line was not a number.
+static int ReadChoice(void) {
+    char Line[32];
+
+    if (fgets(Line, sizeof(Line), stdin) == nullptr) {
+        return -1;
+    }
+
+    if (strchr(Line, '\n') == nullptr) {
+        int Ch;
+        while ((Ch = getchar()) != '\n' && Ch != EOF) {
+        }
+    }
+
+    char* End   = nullptr;
+    long  Value = strtol(Line, &End, 10);
+
+    if (End == Line) {
+        return -2;
+    }
+
+    return (int)Value;
+}
+
 int main(void) {
     // Unbuffered, so nothing is lost if the process dies inside a hook.
     setvbuf(stdout, nullptr, _IONBF, 0);
 
-    HMODULE Ntdll = GetModuleHandleW(L"ntdll.dll");
-    if (Ntdll == nullptr) {
-        printf("[target] GetModuleHandleW(ntdll.dll) failed: %lu\n", GetLastError());
+    if (!ResolveNtdll()) {
         return EXIT_FAILURE;
     }
-
-    PFN_NtAllocateVirtualMemory NtAllocateVirtualMemory =
-        (PFN_NtAllocateVirtualMemory)GetProcAddress(Ntdll, "NtAllocateVirtualMemory");
-    PFN_NtFreeVirtualMemory NtFreeVirtualMemory =
-        (PFN_NtFreeVirtualMemory)GetProcAddress(Ntdll, "NtFreeVirtualMemory");
-
-    if (NtAllocateVirtualMemory == nullptr || NtFreeVirtualMemory == nullptr) {
-        printf("[target] GetProcAddress failed: %lu\n", GetLastError());
-        return EXIT_FAILURE;
-    }
-
-    printf("[target] pid=%lu  ntdll=%p\n", GetCurrentProcessId(), (void*)Ntdll);
-    printf("[target] NtAllocateVirtualMemory=%p\n", (void*)NtAllocateVirtualMemory);
-    printf("[target] NtFreeVirtualMemory=%p\n", (void*)NtFreeVirtualMemory);
 
     for (ULONG Iteration = 1;; Iteration++) {
-        // Size cycles 0x1000..0x8000 so each hooked call is identifiable
-        // and you can confirm the hook forwards RegionSize untouched.
-        PVOID  BaseAddress = nullptr;
-        SIZE_T RegionSize = (SIZE_T)((Iteration % 8) + 1) * 0x1000;
+        PrintMenu();
 
-        printf("[target] #%lu calling NtAllocateVirtualMemory(RegionSize=0x%llX)...\n",
-            Iteration, (unsigned long long)RegionSize);
+        int Choice = ReadChoice();
 
-        NTSTATUS Status = NtAllocateVirtualMemory(
-            GetCurrentProcess(),
-            &BaseAddress,
-            0,
-            &RegionSize,
-            MEM_COMMIT | MEM_RESERVE,
-            PAGE_EXECUTE_READWRITE   // RWX: looks like a shellcode loader, so the hook logs it
-        );
-
-        if (!NT_SUCCESS(Status)) {
-            printf("[target] #%lu failed: 0x%08lX\n", Iteration, (unsigned long)Status);
-        }
-        else {
-            printf("[target] #%lu ok: BaseAddress=%p RegionSize=0x%llX\n",
-                Iteration, BaseAddress, (unsigned long long)RegionSize);
-
-            PVOID  FreeBase = BaseAddress;
-            SIZE_T FreeSize = 0;
-            NtFreeVirtualMemory(GetCurrentProcess(), &FreeBase, &FreeSize, MEM_RELEASE);
+        if (Choice == -1) {
+            printf("[target] stdin closed, exiting\n");
+            break;
         }
 
-        printf("[target] waiting 5 seconds before repeating...\n");
+        switch (Choice) {
+        case 1:
+            CallNtAllocateVirtualMemory(Iteration);
+            break;
+
+        case 2:
+            CallWinHttpConnect(Iteration);
+            break;
+
+        case 3:
+            CallLdapBindSW(Iteration);
+            break;
+
+        case 4:
+            LoadWinHttp();
+            break;
+
+        case 5:
+            LoadWldap32();
+            break;
+
+        case 6:
+            PrintFirstBytes("NtAllocateVirtualMemory", (void*)NtAllocateVirtualMemory);
+            PrintFirstBytes("WinHttpConnect", (void*)pWinHttpConnect);
+            PrintFirstBytes("ldap_bind_sW", (void*)pldap_bind_sW);
+            break;
+
+        case 0:
+            printf("[target] exiting\n");
+            return EXIT_SUCCESS;
+
+        default:
+            printf("[target] unknown choice, pick one of the numbers above\n");
+            continue;   // straight back to the menu, no 5 second wait
+        }
+
+        printf("[target] waiting 5 seconds before showing the menu again...\n");
         Sleep(5000);
     }
 

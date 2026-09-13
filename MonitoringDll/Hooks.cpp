@@ -35,17 +35,19 @@ NTSTATUS NtAllocateVirtualMemoryHook(
 		return Status;
 	}
 
-	PSYSCALL_LOG Log = (PSYSCALL_LOG)HeapAlloc(
+	PTELEMETRY_LOG Log = (PTELEMETRY_LOG)HeapAlloc(
 		GetProcessHeap(),
 		HEAP_ZERO_MEMORY,
-		sizeof(SYSCALL_LOG)
+		sizeof(TELEMETRY_LOG)
 	);
 
 	if (Log == nullptr) {
 		return Status;
 	}
+	Log->Telemetry.Tag = SYSCALL;
 
-	PSYSCALL_TELEMETRY Telemetry = &Log->Telemetry;
+	PSYSCALL_TELEMETRY Telemetry = &Log->Telemetry.Syscall;
+
 	memcpy(Telemetry->SyscallName, "NtAllocateVirtualMemory", sizeof("NtAllocateVirtualMemory"));
 	Telemetry->ProcessId = GetCurrentProcessId();
 	Telemetry->ThreadId = GetCurrentThreadId();
@@ -70,8 +72,8 @@ NTSTATUS NtAllocateVirtualMemoryHook(
 
 	if (!WriteFile(
 			PipeHandle,
-			Telemetry,
-			sizeof(SYSCALL_TELEMETRY),
+			&Log->Telemetry,
+			FIELD_OFFSET(TELEMETRY, Syscall) + sizeof(SYSCALL_TELEMETRY),
 			NULL,
 			&Log->Overlapped
 		) && GetLastError() != ERROR_IO_PENDING) {

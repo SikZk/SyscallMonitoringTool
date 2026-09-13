@@ -1,6 +1,7 @@
 #include "dllmain.h"
 #include "Hooks.h"
 #include "Ntapi.h"
+#include "OtherHooks.h"
 
 UCHAR PushRcxAndJmp[] = {
 	0x51,                                           /* push rcx             */
@@ -30,6 +31,8 @@ PVOID  NtdllAddress;
 ULONG  NtdllSize;
 HANDLE PipeHandle;
 HANDLE IocpHandle;
+
+PVOID DllNotificationCookie;
 
 ULONG WINAPI IocpThread() {
 	OVERLAPPED_ENTRY Entries[10] = { 0 };
@@ -90,6 +93,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 			break;
 		}
 		InitializeSyscallHooks();
+		InitializeOtherHooks();
+
 		break;
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
@@ -176,4 +181,30 @@ void* FindNtdllPadding(IN void* NtdllAddress) {
 	}
 
 	return nullptr;
+}
+
+void InitializeOtherHooks() {
+	HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+	if (hNtdll == 0) {
+		return;
+	}
+
+	PLDR_REGISTER_DLL_NOTIFICATION pLdrRegisterDllNotification = (PLDR_REGISTER_DLL_NOTIFICATION)GetProcAddress(hNtdll, "LdrRegisterDllNotification");
+
+	if (pLdrRegisterDllNotification == 0) {
+		return;
+	}
+
+	NTSTATUS Status = pLdrRegisterDllNotification(
+		0,
+		DllNotificationCallback,
+		nullptr,
+		&DllNotificationCookie
+	);
+
+	if (!NT_SUCCESS(Status)) {
+		DllNotificationCookie = nullptr;
+		return;
+	}
+
 }

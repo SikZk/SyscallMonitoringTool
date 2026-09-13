@@ -7,5 +7,6 @@
 extern HANDLE EventLogHandle;
 
 BOOLEAN InitializeEventLog();
-void LogSyscall(PSYSCALL_LOG Log);
+void LogSyscall(PSYSCALL_TELEMETRY Log);
+void LogHook(PHOOK_TELEMETRY Log);
 void DestroyEventLog();

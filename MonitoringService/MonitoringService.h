@@ -9,3 +9,4 @@ VOID WINAPI ServiceMain(DWORD dwNumServicesArgs, LPWSTR* lpServiceArgVectors);
 void PerformCleanup();
 
 #define SYSCALL_EVENT 0x00000001L
+#define HOOK_EVENT 0x00000002L

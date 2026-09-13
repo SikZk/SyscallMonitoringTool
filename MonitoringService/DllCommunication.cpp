@@ -34,10 +34,14 @@ void WINAPI IocpThread() {
         }
 
         PPIPE_CLIENT Client = (PPIPE_CLIENT)Key;
+        if (Client->Telemetry.Tag == SYSCALL) {
+            LogSyscall(&Client->Telemetry.Syscall);
+        }
+        else if (Client->Telemetry.Tag == HOOK) {
+            LogHook(&Client->Telemetry.Hook);
+        }
 
-        LogSyscall(&Client->Log);
-
-        Result = ReadFile(Client->PipeHandle, &Client->Log, sizeof(SYSCALL_LOG), &BytesRead, Overlapped);
+        Result = ReadFile(Client->PipeHandle, &Client->Telemetry, sizeof(TELEMETRY), &BytesRead, Overlapped);
 
         if (Result == FALSE && GetLastError() != ERROR_IO_PENDING) {
             CleanupClient(Client);
@@ -94,7 +98,7 @@ void WINAPI HandleDllCommunications(_In_ HANDLE InitialPipe) {
             OVERLAPPED ReadOverlapped = { 0 };
             BOOLEAN Result;
 
-            Result = ReadFile(CommunicationPipe, &Client->Log, sizeof(SYSCALL_LOG), &BytesRead, &ReadOverlapped);
+            Result = ReadFile(CommunicationPipe, &Client->Telemetry, sizeof(TELEMETRY), &BytesRead, &ReadOverlapped);
             if (Result == FALSE && GetLastError() != ERROR_IO_PENDING) {
                 break;
             }

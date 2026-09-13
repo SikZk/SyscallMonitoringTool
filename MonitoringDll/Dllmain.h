@@ -3,5 +3,6 @@
 #include <stdio.h>
 
 void InitializeSyscallHooks();
+void InitializeOtherHooks();
 void* FindNtdllPadding(IN void* NtdllAddress);
 ULONG WINAPI IocpThread();
