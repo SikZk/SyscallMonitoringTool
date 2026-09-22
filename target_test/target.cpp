@@ -280,6 +280,85 @@ static void CallLdapBindSW(ULONG Iteration) {
     pldap_unbind(Session);
 }
 
+// Customer-defined, continuable. Nothing else in the process uses it, so the
+// handler below can dismiss it without swallowing somebody else's exception.
+#define TEST_VEH_EXCEPTION_CODE 0xE0000042
+
+// xor eax, eax ; ret  - a valid VEH that returns EXCEPTION_CONTINUE_SEARCH (0).
+// It gets copied into private RWX memory, so the monitor should classify it as
+// PRIVATE and unbacked - the shellcode pattern - right next to the image-backed
+// handler below, which should classify as target_test.exe+RVA.
+static const UCHAR PrivateVehCode[] = { 0x33, 0xC0, 0xC3 };
+
+static PVOID PrivateVehStub = nullptr;
+
+static LONG CALLBACK ImageVehHandler(PEXCEPTION_POINTERS ExceptionInfo) {
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode == TEST_VEH_EXCEPTION_CODE) {
+        // Dismissing the exception is the whole point: a vectored EXCEPTION handler
+        // returning EXCEPTION_CONTINUE_EXECUTION is what makes ntdll go on to run
+        // the vectored CONTINUE handlers, and that is the list the monitoring DLL
+        // registered MonitorHandler on.
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static BOOL EnsurePrivateVehStub(void) {
+    if (PrivateVehStub != nullptr) {
+        return TRUE;
+    }
+
+    // Also trips the NtAllocateVirtualMemory hook on the way past, so this option
+    // produces a SYSCALL_EVENT the first time as well.
+    PrivateVehStub = VirtualAlloc(nullptr, sizeof(PrivateVehCode),
+        MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+
+    if (PrivateVehStub == nullptr) {
+        printf("[target] VirtualAlloc for the private VEH stub failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    memcpy(PrivateVehStub, PrivateVehCode, sizeof(PrivateVehCode));
+    printf("[target] private VEH stub at %p (RWX, not image backed)\n", PrivateVehStub);
+    return TRUE;
+}
+
+static void TriggerVehEvent(void) {
+    if (!EnsurePrivateVehStub()) {
+        return;
+    }
+
+    // First=TRUE puts the private stub at the head of the chain, which is where
+    // malware wants to be - it should show up as ChainIndex 0.
+    PVOID PrivateCookie = AddVectoredExceptionHandler(TRUE,
+        (PVECTORED_EXCEPTION_HANDLER)PrivateVehStub);
+    PVOID ImageCookie = AddVectoredExceptionHandler(FALSE, ImageVehHandler);
+
+    if (PrivateCookie == nullptr || ImageCookie == nullptr) {
+        printf("[target] AddVectoredExceptionHandler failed: %lu\n", GetLastError());
+    }
+    else {
+        printf("[target] registered private=%p image=%p\n",
+            PrivateVehStub, (void*)ImageVehHandler);
+        printf("[target] raising 0x%08X to run the continue handlers...\n",
+            TEST_VEH_EXCEPTION_CODE);
+
+        RaiseException(TEST_VEH_EXCEPTION_CODE, 0, 0, nullptr);
+
+        printf("[target] exception dismissed, execution continued\n");
+    }
+
+    // Unregister so repeated runs do not pile handlers onto the chain.
+    if (ImageCookie != nullptr) {
+        RemoveVectoredExceptionHandler(ImageCookie);
+    }
+
+    if (PrivateCookie != nullptr) {
+        RemoveVectoredExceptionHandler(PrivateCookie);
+    }
+}
+
 static void PrintMenu(void) {
     printf("\n");
     printf("[target] ----------------------------------------\n");
@@ -289,6 +368,7 @@ static void PrintMenu(void) {
     printf("[target]  4) Load winhttp.dll only    (fire the loader notification, call nothing)\n");
     printf("[target]  5) Load wldap32.dll only    (fire the loader notification, call nothing)\n");
     printf("[target]  6) Dump current function bytes\n");
+    printf("[target]  7) Trigger VEH chain walk    (VEH_EVENT, id 3)\n");
     printf("[target]  0) Exit\n");
     printf("[target] ----------------------------------------\n");
     printf("[target] choice: ");
@@ -361,6 +441,10 @@ int main(void) {
             PrintFirstBytes("NtAllocateVirtualMemory", (void*)NtAllocateVirtualMemory);
             PrintFirstBytes("WinHttpConnect", (void*)pWinHttpConnect);
             PrintFirstBytes("ldap_bind_sW", (void*)pldap_bind_sW);
+            break;
+
+        case 7:
+            TriggerVehEvent();
             break;
 
         case 0:

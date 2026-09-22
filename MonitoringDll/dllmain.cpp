@@ -2,6 +2,8 @@
 #include "Hooks.h"
 #include "Ntapi.h"
 #include "OtherHooks.h"
+#include "peb.h"
+#include "veh.h"
 
 UCHAR PushRcxAndJmp[] = {
 	0x51,                                           /* push rcx             */
@@ -94,6 +96,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 		}
 		InitializeSyscallHooks();
 		InitializeOtherHooks();
+		InitializeVehMonitor();
+		InitializePebTraps();
 
 		break;
 	case DLL_THREAD_ATTACH:

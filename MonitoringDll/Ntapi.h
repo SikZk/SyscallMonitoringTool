@@ -1,6 +1,10 @@
 #pragma once
 #include <Windows.h>
-#include <winternl.h>
+#include "peb.h"
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
 
 #define LDR_DLL_NOTIFICATION_REASON_LOADED   1
 #define LDR_DLL_NOTIFICATION_REASON_UNLOADED 2

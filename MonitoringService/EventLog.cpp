@@ -119,3 +119,49 @@ void LogSyscall(_In_ PSYSCALL_TELEMETRY Log) {
 		OutputDebugStringA("[Svc] ReportEvent FAILED\n");
 	}
 }
+
+VOID LogVeh(_In_ PVEH_TELEMETRY Log)
+{
+	PCSTR Strings[6];
+
+	std::string Timestamp = std::to_string(Log->Timestamp);
+	std::string ProcessId = std::to_string(Log->ProcessId);
+	std::string ThreadId = std::to_string(Log->ThreadId);
+
+
+	ULONG_PTR   Temp = (ULONG_PTR)Log->Handler;
+	std::string Handler = std::vformat("0x{:016X}", std::make_format_args(Temp));
+
+	PCSTR MemoryKind;
+	switch (Log->MemoryKind) {
+		case VehMemoryImage:   MemoryKind = "IMAGE";   break;
+		case VehMemoryMapped:  MemoryKind = "MAPPED";  break;
+		case VehMemoryPrivate: MemoryKind = "PRIVATE"; break;
+		default:               MemoryKind = "UNKNOWN"; break;
+	}
+
+	Log->ModuleName[MAX_MODULE_NAME_LENGTH - 1] = L'\0';
+
+	std::string ModuleName;
+
+	if (Log->ModuleName[0] == L'\0') {
+		ModuleName = "<none>";
+	}
+	else {
+		INT Length = WideCharToMultiByte(CP_UTF8, 0, Log->ModuleName, -1, 0, 0, 0, 0);
+
+		if (Length > 0) {
+			ModuleName.resize(Length - 1);
+			WideCharToMultiByte(CP_UTF8, 0, Log->ModuleName, -1, ModuleName.data(), Length, 0, 0);
+		}
+	}
+
+	Strings[0] = Timestamp.data();
+	Strings[1] = ProcessId.data();
+	Strings[2] = ThreadId.data();
+	Strings[3] = Handler.data();
+	Strings[4] = MemoryKind;
+	Strings[5] = ModuleName.data();
+
+	ReportEventA(EventLogHandle, 0, 1, VEH_EVENT, 0, 6, 0, Strings, 0);
+}

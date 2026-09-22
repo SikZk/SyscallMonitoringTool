@@ -163,12 +163,16 @@
     <ClCompile Include="Dllmain.cpp" />
     <ClCompile Include="Hooks.cpp" />
     <ClCompile Include="OtherHooks.cpp" />
+    <ClCompile Include="peb.cpp" />
+    <ClCompile Include="veh.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Dllmain.h" />
     <ClInclude Include="Hooks.h" />
     <ClInclude Include="Ntapi.h" />
     <ClInclude Include="OtherHooks.h" />
+    <ClInclude Include="peb.h" />
+    <ClInclude Include="veh.h" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="HookThunk.asm">

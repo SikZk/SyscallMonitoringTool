@@ -2,6 +2,7 @@
 #include <Windows.h>
 #include <stdio.h>
 #include <intrin.h>
+#include "veh.h"
 
 #define MAX_SYSCALL_NAME_LENGTH 32
 #define MAX_NAME_LENGTH         32
@@ -52,6 +53,7 @@ typedef struct _SYSCALL_TELEMETRY {
 
 #define SYSCALL 0
 #define HOOK    1
+#define VEH     2
 
 typedef struct _TELEMETRY {
 	UCHAR Tag;
@@ -60,6 +62,7 @@ typedef struct _TELEMETRY {
 	{
 		SYSCALL_TELEMETRY Syscall;
 		HOOK_TELEMETRY    Hook;
+		VEH_TELEMETRY	  Veh;
 	};
 
 } TELEMETRY, * PTELEMETRY;

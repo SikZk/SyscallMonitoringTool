@@ -24,6 +24,12 @@
     <ClCompile Include="OtherHooks.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="veh.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="peb.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Dllmain.h">
@@ -36,6 +42,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="OtherHooks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="veh.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="peb.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

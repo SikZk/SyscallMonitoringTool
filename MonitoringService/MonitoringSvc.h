@@ -62,3 +62,17 @@
 //
 #define HOOK_EVENT                       0x00000002L
 
+//
+// MessageId: VEH_EVENT
+//
+// MessageText:
+//
+// Timestamp: %1%n
+// ProcessId: %2%n
+// ThreadId: %3%n
+// Handler: %4%n
+// MemoryKind: %5%n
+// Module: %6
+//
+#define VEH_EVENT                        0x00000003L
+

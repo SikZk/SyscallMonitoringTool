@@ -40,6 +40,9 @@ void WINAPI IocpThread() {
         else if (Client->Telemetry.Tag == HOOK) {
             LogHook(&Client->Telemetry.Hook);
         }
+        else if (Client->Telemetry.Tag == VEH) {
+            LogVeh(&Client->Telemetry.Veh);
+        }
 
         Result = ReadFile(Client->PipeHandle, &Client->Telemetry, sizeof(TELEMETRY), &BytesRead, Overlapped);
 

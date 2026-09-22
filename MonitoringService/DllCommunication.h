@@ -10,9 +10,19 @@
 #define MAX_NAME_LENGTH         32
 #define MAX_CALLSTACK_SIZE      12
 #define NUMBER_OF_HOOKS         12
+#define MAX_MODULE_NAME_LENGTH 64
 
 extern HANDLE              IocpHandle;
 extern SECURITY_ATTRIBUTES PipeAttributes;
+
+
+typedef enum _VEH_MEMORY_KIND
+{
+	VehMemoryUnknown = 0,
+	VehMemoryImage,
+	VehMemoryMapped,
+	VehMemoryPrivate
+} VEH_MEMORY_KIND;
 
 typedef enum _PARAMETER_TYPE
 {
@@ -54,8 +64,21 @@ typedef struct _SYSCALL_TELEMETRY {
 	void* Parameters[MAX_PARAMETER_COUNT];
 } SYSCALL_TELEMETRY, * PSYSCALL_TELEMETRY;
 
+
+typedef struct _VEH_TELEMETRY
+{
+	SIZE_T Timestamp;
+	ULONG  ProcessId;
+	ULONG  ThreadId;
+	PVOID  Handler;
+
+	ULONG  MemoryKind;
+	WCHAR  ModuleName[MAX_MODULE_NAME_LENGTH];
+} VEH_TELEMETRY, * PVEH_TELEMETRY;
+
 #define SYSCALL 0
 #define HOOK    1
+#define VEH     2
 
 typedef struct _TELEMETRY {
     UCHAR Tag;
@@ -64,6 +87,7 @@ typedef struct _TELEMETRY {
     {
         SYSCALL_TELEMETRY Syscall;
         HOOK_TELEMETRY    Hook;
+		VEH_TELEMETRY     Veh;
     };
 
 } TELEMETRY, * PTELEMETRY;

@@ -21,3 +21,15 @@ ThreadId: %4%n
 Callstack: %5%n
 Parameters: %6
 .
+
+MessageId=0x3
+SymbolicName=VEH_EVENT
+Language=English
+Timestamp: %1%n
+ProcessId: %2%n
+ThreadId: %3%n
+Handler: %4%n
+MemoryKind: %5%n
+Module: %6
+.
+
