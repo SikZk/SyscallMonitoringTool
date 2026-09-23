@@ -30,6 +30,9 @@
     <ClCompile Include="peb.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="InstrumentionalCallback.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Dllmain.h">
@@ -50,9 +53,15 @@
     <ClInclude Include="peb.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="InstrumentionalCallback.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="HookThunk.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="PiThunk.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

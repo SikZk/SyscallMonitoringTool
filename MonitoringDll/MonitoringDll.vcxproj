@@ -162,6 +162,7 @@
   <ItemGroup>
     <ClCompile Include="Dllmain.cpp" />
     <ClCompile Include="Hooks.cpp" />
+    <ClCompile Include="InstrumentionalCallback.cpp" />
     <ClCompile Include="OtherHooks.cpp" />
     <ClCompile Include="peb.cpp" />
     <ClCompile Include="veh.cpp" />
@@ -169,6 +170,7 @@
   <ItemGroup>
     <ClInclude Include="Dllmain.h" />
     <ClInclude Include="Hooks.h" />
+    <ClInclude Include="InstrumentionalCallback.h" />
     <ClInclude Include="Ntapi.h" />
     <ClInclude Include="OtherHooks.h" />
     <ClInclude Include="peb.h" />
@@ -178,6 +180,7 @@
     <MASM Include="HookThunk.asm">
       <FileType>Document</FileType>
     </MASM>
+    <MASM Include="PiThunk.asm" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

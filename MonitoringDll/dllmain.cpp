@@ -4,6 +4,7 @@
 #include "OtherHooks.h"
 #include "peb.h"
 #include "veh.h"
+#include "InstrumentionalCallback.h"
 
 UCHAR PushRcxAndJmp[] = {
 	0x51,                                           /* push rcx             */
@@ -98,6 +99,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
 		InitializeOtherHooks();
 		InitializeVehMonitor();
 		InitializePebTraps();
+		InitializePiCallback();
 
 		break;
 	case DLL_THREAD_ATTACH:

@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <winldap.h>
+#include <intrin.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -359,6 +360,180 @@ static void TriggerVehEvent(void) {
     }
 }
 
+//
+// Minimal loader-list view. Named apart from both the SDK and the monitoring
+// DLL's peb.h so nothing collides - winternl.h's LDR_DATA_TABLE_ENTRY is no use
+// here because it has no BaseDllName. Only the fields below are needed.
+//
+
+typedef struct _TARGET_UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR  Buffer;
+} TARGET_UNICODE_STRING;
+
+typedef struct _TARGET_LDR_ENTRY {
+    LIST_ENTRY            InLoadOrderLinks;
+    LIST_ENTRY            InMemoryOrderLinks;
+    LIST_ENTRY            InInitializationOrderLinks;
+    PVOID                 DllBase;
+    PVOID                 EntryPoint;
+    ULONG                 SizeOfImage;
+    TARGET_UNICODE_STRING FullDllName;
+    TARGET_UNICODE_STRING BaseDllName;
+} TARGET_LDR_ENTRY, * PTARGET_LDR_ENTRY;
+
+typedef struct _TARGET_PEB_LDR_DATA {
+    ULONG      Length;
+    BOOLEAN    Initialized;
+    PVOID      SsHandle;
+    LIST_ENTRY InLoadOrderModuleList;
+    LIST_ENTRY InMemoryOrderModuleList;
+    LIST_ENTRY InInitializationOrderModuleList;
+} TARGET_PEB_LDR_DATA, * PTARGET_PEB_LDR_DATA;
+
+typedef struct _TARGET_PEB {
+    BOOLEAN              InheritedAddressSpace;
+    BOOLEAN              ReadImageFileExecOptions;
+    BOOLEAN              BeingDebugged;
+    BOOLEAN              BitField;
+    PVOID                Mutant;
+    PVOID                ImageBaseAddress;
+    PTARGET_PEB_LDR_DATA Ldr;
+} TARGET_PEB, * PTARGET_PEB;
+
+// Walk the loader list and read the first bytes of every module's code section.
+// This is the hook-check / unhooking pattern: find modules through the PEB rather
+// than GetModuleHandle, then compare their .text against a clean copy. The EDR
+// plants decoy modules in that list whose code section is PAGE_GUARD, so the read
+// raises STATUS_GUARD_PAGE_VIOLATION and PebTrapVehHandler terminates us.
+static void ScanModuleCodeSections(void) {
+    PTARGET_PEB Peb  = (PTARGET_PEB)__readgsqword(0x60);
+    PLIST_ENTRY Head = &Peb->Ldr->InLoadOrderModuleList;
+
+    printf("[target] walking InLoadOrderModuleList, reading each module's code...\n");
+
+    for (PLIST_ENTRY Next = Head->Flink; Next != Head; Next = Next->Flink) {
+        PTARGET_LDR_ENTRY Module = CONTAINING_RECORD(Next, TARGET_LDR_ENTRY, InLoadOrderLinks);
+
+        if (Module->DllBase == nullptr || Module->BaseDllName.Buffer == nullptr) {
+            continue;
+        }
+
+        // BaseDllName is counted, not guaranteed NUL terminated.
+        WCHAR  Name[64];
+        SIZE_T Count = Module->BaseDllName.Length / sizeof(WCHAR);
+
+        if (Count > 63) {
+            Count = 63;
+        }
+
+        memcpy(Name, Module->BaseDllName.Buffer, Count * sizeof(WCHAR));
+        Name[Count] = L'\0';
+
+        PIMAGE_DOS_HEADER Dos = (PIMAGE_DOS_HEADER)Module->DllBase;
+        if (Dos->e_magic != IMAGE_DOS_SIGNATURE) {
+            continue;
+        }
+
+        PIMAGE_NT_HEADERS Nt = (PIMAGE_NT_HEADERS)((PUCHAR)Module->DllBase + Dos->e_lfanew);
+        if (Nt->Signature != IMAGE_NT_SIGNATURE) {
+            continue;
+        }
+
+        // Headers are plain readable even on a decoy - only the code section is
+        // guarded, so nothing trips until the line below.
+        PIMAGE_SECTION_HEADER Section = IMAGE_FIRST_SECTION(Nt);
+        PUCHAR                Code    = (PUCHAR)Module->DllBase + Section->VirtualAddress;
+
+        printf("[target]   %-24ws code at %p ... ", Name, Code);
+
+        volatile UCHAR FirstByte = *Code;
+
+        printf("first byte 0x%02X\n", FirstByte);
+    }
+
+    printf("[target] scan finished - no decoy was touched, process still alive\n");
+}
+
+//
+// mov r10, rcx ; mov eax, <ssn> ; syscall ; ret
+// The classic direct-syscall stub. Copied into private RWX memory, so the address
+// the kernel returns to belongs to no image on disk.
+//
+
+static const UCHAR SyscallStubCode[] = {
+    0x4C, 0x8B, 0xD1,                   /* mov r10, rcx  */
+    0xB8, 0x00, 0x00, 0x00, 0x00,       /* mov eax, ssn  */
+    0x0F, 0x05,                         /* syscall       */
+    0xC3                                /* ret           */
+};
+
+#define SYSCALL_STUB_SSN_OFFSET 4
+
+typedef NTSTATUS(NTAPI* PFN_NtDelayExecution)(
+    BOOLEAN        Alertable,
+    PLARGE_INTEGER DelayInterval
+    );
+
+static BOOL ReadSyscallNumber(const char* Name, ULONG* Ssn) {
+    HMODULE Ntdll = GetModuleHandleW(L"ntdll.dll");
+    PUCHAR  Stub  = (PUCHAR)GetProcAddress(Ntdll, Name);
+
+    if (Stub == nullptr) {
+        printf("[target] GetProcAddress(%s) failed: %lu\n", Name, GetLastError());
+        return FALSE;
+    }
+
+    // A clean x64 stub opens with 4C 8B D1 B8 <ssn>. If it does not, someone has
+    // already patched it and the dword at +4 is not a service number.
+    if (Stub[0] != 0x4C || Stub[1] != 0x8B || Stub[2] != 0xD1 || Stub[3] != 0xB8) {
+        printf("[target] %s is not a clean syscall stub - hooked?\n", Name);
+        PrintFirstBytes(Name, Stub);
+        return FALSE;
+    }
+
+    *Ssn = *(ULONG*)(Stub + 4);
+    printf("[target] %s ssn = 0x%lX\n", Name, *Ssn);
+    return TRUE;
+}
+
+static void TriggerUnbackedSyscall(void) {
+    ULONG Ssn = 0;
+
+    // NtDelayExecution on purpose: harmless, and it is not one of the syscalls the
+    // monitoring DLL patches, so its prologue is still a readable stub.
+    if (!ReadSyscallNumber("NtDelayExecution", &Ssn)) {
+        return;
+    }
+
+    PUCHAR Stub = (PUCHAR)VirtualAlloc(nullptr, sizeof(SyscallStubCode),
+        MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+
+    if (Stub == nullptr) {
+        printf("[target] VirtualAlloc failed: %lu\n", GetLastError());
+        return;
+    }
+
+    memcpy(Stub, SyscallStubCode, sizeof(SyscallStubCode));
+    *(ULONG*)(Stub + SYSCALL_STUB_SSN_OFFSET) = Ssn;
+
+    printf("[target] direct syscall stub at %p (private RWX, no backing image)\n", Stub);
+    printf("[target] issuing the syscall from it - the kernel returns into private\n");
+    printf("[target] memory, which is what the instrumentation callback inspects...\n");
+
+    LARGE_INTEGER Delay;
+    Delay.QuadPart = -10000;   // 1 ms, relative
+
+    PFN_NtDelayExecution Direct = (PFN_NtDelayExecution)Stub;
+    NTSTATUS             Status = Direct(FALSE, &Delay);
+
+    printf("[target] survived: syscall returned 0x%08lX - callback did not fire\n",
+        (unsigned long)Status);
+
+    VirtualFree(Stub, 0, MEM_RELEASE);
+}
+
 static void PrintMenu(void) {
     printf("\n");
     printf("[target] ----------------------------------------\n");
@@ -369,6 +544,8 @@ static void PrintMenu(void) {
     printf("[target]  5) Load wldap32.dll only    (fire the loader notification, call nothing)\n");
     printf("[target]  6) Dump current function bytes\n");
     printf("[target]  7) Trigger VEH chain walk    (VEH_EVENT, id 3)\n");
+    printf("[target]  8) Scan module code via PEB  (KILLS: decoy guard page)\n");
+    printf("[target]  9) Direct syscall from RWX   (KILLS: unbacked target)\n");
     printf("[target]  0) Exit\n");
     printf("[target] ----------------------------------------\n");
     printf("[target] choice: ");
@@ -445,6 +622,14 @@ int main(void) {
 
         case 7:
             TriggerVehEvent();
+            break;
+
+        case 8:
+            ScanModuleCodeSections();
+            break;
+
+        case 9:
+            TriggerUnbackedSyscall();
             break;
 
         case 0:
