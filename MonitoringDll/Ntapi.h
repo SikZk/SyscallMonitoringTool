@@ -60,3 +60,14 @@ EXTERN_C NTSYSCALLAPI NTSTATUS NTAPI NtAllocateVirtualMemory(
     _In_ ULONG AllocationType,
     _In_ ULONG PageProtection
 );
+
+#define LDR_ADDREF_DLL_PIN 0x00000001
+
+NTSYSAPI NTSTATUS NTAPI LdrAddRefDll(
+    _In_ ULONG Flags,
+    _In_ PVOID DllHandle
+);
+
+NTSYSAPI BOOLEAN NTAPI RtlDllShutdownInProgress(
+    VOID
+);

@@ -34,6 +34,7 @@ PVOID  NtdllAddress;
 ULONG  NtdllSize;
 HANDLE PipeHandle;
 HANDLE IocpHandle;
+SIZE_T IsInitialized = 0;
 
 PVOID DllNotificationCookie;
 
@@ -55,56 +56,74 @@ ULONG WINAPI IocpThread() {
 	return 0;
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
-	HMODULE Self;
-	GetModuleHandleExW(
-		GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-		(LPCWSTR)&DllMain,
-		&Self
+VOID InitializeDll() {
+	BOOLEAN CanConnect;
+	CanConnect = WaitNamedPipeW(L"\\\\.\\pipe\\MonitoringService", 5 * 1000);
+	if (CanConnect == FALSE) {
+		return;
+	}
+	PipeHandle = CreateFileW(L"\\\\.\\pipe\\MonitoringService",
+		FILE_WRITE_DATA,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		0,
+		OPEN_EXISTING,
+		FILE_FLAG_OVERLAPPED,
+		0
 	);
+	if (PipeHandle == INVALID_HANDLE_VALUE) {
+		printf("[Dll] Could not connect to the service: %lu", GetLastError());
+		return;
+	}
+
+	IocpHandle = CreateIoCompletionPort(PipeHandle, 0, 0, 0);
+	if (IocpHandle == 0) {
+		printf("[Dll] Could not create IOCP: %lu", GetLastError());
+		CloseHandle(PipeHandle);
+		return;
+	}
+	if (CreateThread(0, 0, (LPTHREAD_START_ROUTINE)IocpThread, 0, 0, 0) == FALSE) {
+		CloseHandle(PipeHandle);
+		CloseHandle(IocpHandle);
+		printf("[Dll] Could not create worker thread: %lu", GetLastError());
+		return;
+	}
+	InitializeSyscallHooks();
+	InitializeOtherHooks();
+	InitializeVehMonitor();
+	InitializePebTraps();
+	InitializePiCallback();
+}
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
+	PVOID CallerImageBase = 0;
+	RtlPcToFileHeader(_ReturnAddress(), &CallerImageBase);
+
+	if (CallerImageBase != hModule)
+	{
+		__fastfail(0);
+		return FALSE;
+	}
 
 	switch (reason) {
 	case DLL_PROCESS_ATTACH:
-		BOOLEAN CanConnect;
-		CanConnect = WaitNamedPipeW(L"\\\\.\\pipe\\MonitoringService", 5 * 1000);
-		if (CanConnect == FALSE) {
-			break;
+		if (InterlockedIncrement(&IsInitialized) != 1)
+		{
+			__fastfail(0);
 		}
-		PipeHandle = CreateFileW(L"\\\\.\\pipe\\MonitoringService",
-			FILE_WRITE_DATA,
-			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-			0,
-			OPEN_EXISTING,
-			FILE_FLAG_OVERLAPPED,
-			0
-		);
-		if (PipeHandle == INVALID_HANDLE_VALUE) {
-			printf("[Dll] Could not connect to the service: %lu", GetLastError());
-			break;
-		}
+		LdrAddRefDll(LDR_ADDREF_DLL_PIN, hModule);
 
-		IocpHandle = CreateIoCompletionPort(PipeHandle, 0, 0, 0);
-		if (IocpHandle == 0) {
-			printf("[Dll] Could not create IOCP: %lu", GetLastError());
-			CloseHandle(PipeHandle);
-			break;
-		}
-		if (CreateThread(0, 0, (LPTHREAD_START_ROUTINE)IocpThread, 0, 0, 0) == FALSE) {
-			CloseHandle(PipeHandle);
-			CloseHandle(IocpHandle);
-			printf("[Dll] Could not create worker thread: %lu", GetLastError());
-			break;
-		}
-		InitializeSyscallHooks();
-		InitializeOtherHooks();
-		InitializeVehMonitor();
-		InitializePebTraps();
-		InitializePiCallback();
+		InitializeDll();
 
 		break;
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
 	case DLL_PROCESS_DETACH:
+		if (RtlDllShutdownInProgress() == FALSE
+			||
+			lpReserved == 0)
+		{
+			__fastfail(0);
+		}
 		break;
 	}
 	return TRUE;
