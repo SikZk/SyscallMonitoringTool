@@ -118,10 +118,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
 	case DLL_PROCESS_DETACH:
-		if (RtlDllShutdownInProgress() == FALSE
-			||
-			lpReserved == 0)
-		{
+		if (RtlDllShutdownInProgress() == FALSE || lpReserved == 0) {
 			__fastfail(0);
 		}
 		break;
