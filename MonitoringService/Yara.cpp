@@ -5,10 +5,48 @@
 #include <sstream>
 #include <iomanip>
 #include "EventLog.h"
+#include <unordered_map>
+#include <mutex>
 
 namespace fs = std::filesystem;
 
 YR_RULES* Rules = 0;
+
+//
+// A single PowerShell invocation raises several script-block (4104) and module
+// (4103) events in quick succession, all naming the same process. Scanning a
+// whole address space once per event is both slow and a pile of identical
+// records, so a pid is rescanned only after this long.
+//
+#define SCAN_COOLDOWN_MS 10000
+
+static std::unordered_map<ULONG, ULONGLONG> LastScanTick;
+static std::mutex                           LastScanLock;
+
+static BOOLEAN ShouldScan(ULONG ProcessId)
+{
+	ULONGLONG                   Now = GetTickCount64();
+	std::lock_guard<std::mutex> Guard(LastScanLock);
+
+	auto Entry = LastScanTick.find(ProcessId);
+
+	if (Entry != LastScanTick.end() && Now - Entry->second < SCAN_COOLDOWN_MS)
+	{
+		return FALSE;
+	}
+
+	if (LastScanTick.size() > 512)
+	{
+		for (auto It = LastScanTick.begin(); It != LastScanTick.end(); )
+		{
+			It = (Now - It->second >= SCAN_COOLDOWN_MS) ? LastScanTick.erase(It)
+			                                            : std::next(It);
+		}
+	}
+
+	LastScanTick[ProcessId] = Now;
+	return TRUE;
+}
 
 INT ScanCallback(YR_SCAN_CONTEXT* Context, INT Message, PVOID MessageData, PVOID UserData) { 
 	PSCAN_LOG  ScanLog = (PSCAN_LOG)UserData;
@@ -100,6 +138,26 @@ std::string FormatForEventLog(PSCAN_LOG ScanLog) {
 }
 
 VOID ScanProcess(ULONG ProcessId) {
+	//
+	// An event can name a process that has already exited - common for script
+	// hosts, which finish long before the log entry is dispatched. Scanning those
+	// just produces a "could not read process memory" record per dead pid, so
+	// drop them before they reach the log.
+	//
+	HANDLE Probe = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, ProcessId);
+
+	if (Probe == 0)
+	{
+		return;
+	}
+
+	CloseHandle(Probe);
+
+	if (ShouldScan(ProcessId) == FALSE)
+	{
+		return;
+	}
+
 	SCAN_LOG ScanLog{};
 	ScanLog.ProcessId = ProcessId;
 	ScanLog.ProcessName = GetProcessNameByPid(ProcessId);
@@ -151,8 +209,6 @@ BOOLEAN CompileRulesFromFolder(YR_COMPILER* Compiler)
 
 	if (Ec)
 	{
-		// Missing or unreadable rules folder. Without the error_code overload
-		// this throws, and an unhandled exception takes the whole service down.
 		return FALSE;
 	}
 

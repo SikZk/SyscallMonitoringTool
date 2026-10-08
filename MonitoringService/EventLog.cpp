@@ -1,5 +1,4 @@
 ﻿#include "EventLog.h"
-#include <strsafe.h>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include "Yara.h"
@@ -181,22 +180,6 @@ VOID LogScan(_In_ PSCAN_LOG ScanLog) {
 	ReportEventA(EventLogHandle, 0, 1, SCAN_EVENT, 0, 1, 0, &Strings, 0);
 }
 
-//
-// Traces to the debugger. View on the VM with DebugView running as admin and
-// "Capture Global Win32" ticked - a service has no console to print to.
-//
-static void Trace(PCSTR Format, ...)
-{
-	CHAR    Buffer[512];
-	va_list Args;
-
-	va_start(Args, Format);
-	StringCchVPrintfA(Buffer, ARRAYSIZE(Buffer), Format, Args);
-	va_end(Args);
-
-	OutputDebugStringA(Buffer);
-}
-
 ULONG GetPidFromEventData(EVT_HANDLE Event) {
 	HANDLE Context = EvtCreateRenderContext(0, 0, EvtRenderContextSystem);
 	if (Context == 0) {
@@ -292,11 +275,18 @@ ULONG WINAPI SubscriptionThread() {
 		WaitHandles.push_back(Subscription.SignalEvent);
 	}
 
+
 	EVT_HANDLE Events[16];
 	ULONG      Returned;
 
 	while (TRUE) {
 		ULONG Wait = WaitForMultipleObjects((ULONG)WaitHandles.size(), WaitHandles.data(), FALSE, INFINITE);
+
+		if (Wait == WAIT_FAILED)
+		{
+			break;
+		}
+
 		if (Wait == WAIT_OBJECT_0)
 		{
 			break;
@@ -304,17 +294,11 @@ ULONG WINAPI SubscriptionThread() {
 		ULONG                 Index = Wait - WAIT_OBJECT_0 - 1;
 		SUBSCRIPTION_CONTEXT* Ctx = &Subscriptions[Index];
 
-		Trace("[Svc] thread: signalled, draining\n");
-
 		while (EvtNext(Ctx->Subscription, 16, Events, 0, 0, &Returned))
 		{
-			Trace("[Svc] thread: EvtNext returned %lu events\n", Returned);
-
 			for (ULONG Index = 0; Index < Returned; Index++)
 			{
 				ULONG ProcessId = GetPidFromEventData(Events[Index]);
-
-				Trace("[Svc] thread: event pid=%lu\n", ProcessId);
 
 				if (ProcessId != 0) {
 					ScanProcess(ProcessId);
@@ -324,11 +308,12 @@ ULONG WINAPI SubscriptionThread() {
 				Events[Index] = 0;
 			}
 		}
-		if (GetLastError() != ERROR_NO_MORE_ITEMS)
+		ULONG NextError = GetLastError();
+
+		if (NextError != ERROR_NO_MORE_ITEMS && NextError != ERROR_TIMEOUT)
 		{
 			// NOTE: this tears down every subscription permanently. The service
 			// stays RUNNING but goes deaf, which looks exactly like "no events".
-			Trace("[Svc] thread: EvtNext failed: %lu - GIVING UP\n", GetLastError());
 			break;
 		}
 
@@ -341,7 +326,6 @@ ULONG WINAPI SubscriptionThread() {
 BOOLEAN InitializeSubscriptions() {
 	std::ifstream File("C:\\Users\\user\\Desktop\\HostStuff\\MonitoringService\\Config.json");
 	if (File.is_open() == FALSE) {
-		Trace("[Svc] subs: Config.json could not be opened\n");
 		return FALSE;
 	}
 
@@ -350,15 +334,13 @@ BOOLEAN InitializeSubscriptions() {
 		json Json = json::parse(File);
 		Config = Json.get<SERVICE_CONFIG>();
 	}
-	catch (const std::exception& Ex) {
-		Trace("[Svc] subs: Config.json parse failed: %s\n", Ex.what());
+	catch (const std::exception&) {
 		return FALSE;
 	}
 
-	Trace("[Svc] subs: %zu queries in config\n", Config.EventLogs.size());
 
 	for (const auto& Query : Config.EventLogs) {
-		HANDLE SignalEvent = CreateEventW(0, TRUE, FALSE, 0);
+		HANDLE SignalEvent = CreateEventW(0, TRUE, TRUE, 0);
 		if (SignalEvent == 0) {
 			break;
 		}
@@ -366,12 +348,10 @@ BOOLEAN InitializeSubscriptions() {
 		EVT_HANDLE Subscription = EvtSubscribe(0, SignalEvent, 0, Query.query.c_str(), 0, 0, 0, EvtSubscribeStartAtOldestRecord);
 		if (Subscription == 0)
 		{
-			Trace("[Svc] subs: EvtSubscribe failed: %lu\n", GetLastError());
 			CloseHandle(SignalEvent);
 			break;
 		}
 
-		Trace("[Svc] subs: subscribed ok\n");
 
 		SUBSCRIPTION_CONTEXT Ctx;
 		Ctx.Subscription = Subscription;
