@@ -24,6 +24,9 @@
     <ClCompile Include="DllCommunication.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Yara.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="MonitoringService.h">
@@ -35,9 +38,15 @@
     <ClInclude Include="DllCommunication.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Yara.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="MonitoringSvc.mc">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Config.json">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>

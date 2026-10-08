@@ -1,0 +1,8 @@
+{
+  "event_log": [
+    {
+      "id": "PowerShell",
+      "query": "<QueryList><Query Id=\"0\" Path=\"Microsoft-Windows-PowerShell/Operational\"><Select Path=\"Microsoft-Windows-PowerShell/Operational\">*[System[(EventID=4103 or EventID=4104 or EventID=4105 or EventID=4106)]]</Select></Query></QueryList>"
+    }
+  ]
+}

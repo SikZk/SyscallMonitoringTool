@@ -1,6 +1,7 @@
-#include "MonitoringService.h"
+﻿#include "MonitoringService.h"
 #include "EventLog.h"
 #include "DllCommunication.h"
+#include "Yara.h"
 
 CONST WCHAR* ServiceName = L"MonitoringService";
 SERVICE_STATUS_HANDLE StatusHandle = 0;
@@ -56,6 +57,16 @@ VOID WINAPI ServiceMain(DWORD dwNumServicesArgs, LPWSTR* lpServiceArgVectors) {
         }
 
         Result = InitializeDllComms();
+        if (Result == FALSE) {
+            break;
+        }
+
+        Result = InitializeScanner();
+        if (Result == FALSE) {
+            break;
+        }
+
+        Result = InitializeSubscriptions();
         if (Result == FALSE) {
             break;
         }

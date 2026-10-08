@@ -33,3 +33,9 @@ MemoryKind: %5%n
 Module: %6
 .
 
+MessageId=0x4
+SymbolicName=SCAN_EVENT
+Language=English
+%1
+.
+

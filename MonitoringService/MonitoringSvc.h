@@ -76,3 +76,12 @@
 //
 #define VEH_EVENT                        0x00000003L
 
+//
+// MessageId: SCAN_EVENT
+//
+// MessageText:
+//
+// %1
+//
+#define SCAN_EVENT                       0x00000004L
+

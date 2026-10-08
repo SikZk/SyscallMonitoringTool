@@ -1,6 +1,14 @@
-#include "EventLog.h"
+﻿#include "EventLog.h"
+#include <strsafe.h>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include "Yara.h"
+#pragma comment(lib, "wevtapi.lib")
+using json = nlohmann::json;
 
 HANDLE EventLogHandle;
+extern HANDLE                     StopEvent;
+std::vector<SUBSCRIPTION_CONTEXT> Subscriptions;
 
 BOOLEAN InitializeEventLog() {
 	EventLogHandle = RegisterEventSourceW(0, L"MonitoringService");
@@ -164,4 +172,229 @@ VOID LogVeh(_In_ PVEH_TELEMETRY Log)
 	Strings[5] = ModuleName.data();
 
 	ReportEventA(EventLogHandle, 0, 1, VEH_EVENT, 0, 6, 0, Strings, 0);
+}
+
+VOID LogScan(_In_ PSCAN_LOG ScanLog) {
+	std::string Log = FormatForEventLog(ScanLog);
+	PCSTR       Strings = Log.c_str();
+
+	ReportEventA(EventLogHandle, 0, 1, SCAN_EVENT, 0, 1, 0, &Strings, 0);
+}
+
+//
+// Traces to the debugger. View on the VM with DebugView running as admin and
+// "Capture Global Win32" ticked - a service has no console to print to.
+//
+static void Trace(PCSTR Format, ...)
+{
+	CHAR    Buffer[512];
+	va_list Args;
+
+	va_start(Args, Format);
+	StringCchVPrintfA(Buffer, ARRAYSIZE(Buffer), Format, Args);
+	va_end(Args);
+
+	OutputDebugStringA(Buffer);
+}
+
+ULONG GetPidFromEventData(EVT_HANDLE Event) {
+	HANDLE Context = EvtCreateRenderContext(0, 0, EvtRenderContextSystem);
+	if (Context == 0) {
+		return 0;
+	}
+
+	BOOLEAN      Result;
+	ULONG        BufferSize = 0;
+	ULONG        BufferUsed = 0;
+	ULONG        PropertyCount = 0;
+	PEVT_VARIANT Property = 0;
+
+	Result = EvtRender(
+		Context,
+		Event,
+		EvtRenderEventValues,
+		BufferSize,
+		Property,
+		&BufferUsed,
+		&PropertyCount
+	);
+	if (Result == FALSE && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+	{
+		EvtClose(Context);
+		return 0;
+	}
+	BufferSize = BufferUsed;
+	Property = (PEVT_VARIANT)std::malloc(BufferUsed);
+
+	if (Property == 0)
+	{
+		EvtClose(Context);
+		return 0;
+	}
+
+	Result = EvtRender(
+		Context,
+		Event,
+		EvtRenderEventValues,
+		BufferSize,
+		Property,
+		&BufferUsed,
+		&PropertyCount
+	);
+
+	EvtClose(Context);
+
+	ULONG ProcessId = 0;
+
+	if (Result == TRUE)
+	{
+		ProcessId = Property[EvtSystemProcessID].UInt32Val;
+	}
+
+	std::free(Property);
+	return ProcessId;
+}
+
+VOID from_json(const json& j, EVENT_LOG_QUERY& e)
+{
+	std::string id = j.at("id").get<std::string>();
+	std::string query = j.at("query").get<std::string>();
+
+	e.id.assign(id.begin(), id.end());
+	e.query.assign(query.begin(), query.end());
+}
+
+VOID from_json(const json& j, SERVICE_CONFIG& e)
+{
+	if (j.contains("event_log"))
+	{
+		e.EventLogs = j.at("event_log").get<std::vector<EVENT_LOG_QUERY>>();
+	}
+}
+
+VOID DestroySubscriptions()
+{
+	for (auto& Subscription : Subscriptions)
+	{
+		EvtClose(Subscription.Subscription);
+		CloseHandle(Subscription.SignalEvent);
+	}
+
+	Subscriptions.clear();
+}
+
+ULONG WINAPI SubscriptionThread() {
+	std::vector<HANDLE> WaitHandles;
+	WaitHandles.push_back(StopEvent);
+
+	for (const auto& Subscription : Subscriptions)
+	{
+		WaitHandles.push_back(Subscription.SignalEvent);
+	}
+
+	EVT_HANDLE Events[16];
+	ULONG      Returned;
+
+	while (TRUE) {
+		ULONG Wait = WaitForMultipleObjects((ULONG)WaitHandles.size(), WaitHandles.data(), FALSE, INFINITE);
+		if (Wait == WAIT_OBJECT_0)
+		{
+			break;
+		}
+		ULONG                 Index = Wait - WAIT_OBJECT_0 - 1;
+		SUBSCRIPTION_CONTEXT* Ctx = &Subscriptions[Index];
+
+		Trace("[Svc] thread: signalled, draining\n");
+
+		while (EvtNext(Ctx->Subscription, 16, Events, 0, 0, &Returned))
+		{
+			Trace("[Svc] thread: EvtNext returned %lu events\n", Returned);
+
+			for (ULONG Index = 0; Index < Returned; Index++)
+			{
+				ULONG ProcessId = GetPidFromEventData(Events[Index]);
+
+				Trace("[Svc] thread: event pid=%lu\n", ProcessId);
+
+				if (ProcessId != 0) {
+					ScanProcess(ProcessId);
+				}
+
+				EvtClose(Events[Index]);
+				Events[Index] = 0;
+			}
+		}
+		if (GetLastError() != ERROR_NO_MORE_ITEMS)
+		{
+			// NOTE: this tears down every subscription permanently. The service
+			// stays RUNNING but goes deaf, which looks exactly like "no events".
+			Trace("[Svc] thread: EvtNext failed: %lu - GIVING UP\n", GetLastError());
+			break;
+		}
+
+		ResetEvent(Ctx->SignalEvent);
+	}
+	DestroySubscriptions();
+	return 0;
+}
+
+BOOLEAN InitializeSubscriptions() {
+	std::ifstream File("C:\\Users\\user\\Desktop\\HostStuff\\MonitoringService\\Config.json");
+	if (File.is_open() == FALSE) {
+		Trace("[Svc] subs: Config.json could not be opened\n");
+		return FALSE;
+	}
+
+	SERVICE_CONFIG Config;
+	try {
+		json Json = json::parse(File);
+		Config = Json.get<SERVICE_CONFIG>();
+	}
+	catch (const std::exception& Ex) {
+		Trace("[Svc] subs: Config.json parse failed: %s\n", Ex.what());
+		return FALSE;
+	}
+
+	Trace("[Svc] subs: %zu queries in config\n", Config.EventLogs.size());
+
+	for (const auto& Query : Config.EventLogs) {
+		HANDLE SignalEvent = CreateEventW(0, TRUE, FALSE, 0);
+		if (SignalEvent == 0) {
+			break;
+		}
+
+		EVT_HANDLE Subscription = EvtSubscribe(0, SignalEvent, 0, Query.query.c_str(), 0, 0, 0, EvtSubscribeStartAtOldestRecord);
+		if (Subscription == 0)
+		{
+			Trace("[Svc] subs: EvtSubscribe failed: %lu\n", GetLastError());
+			CloseHandle(SignalEvent);
+			break;
+		}
+
+		Trace("[Svc] subs: subscribed ok\n");
+
+		SUBSCRIPTION_CONTEXT Ctx;
+		Ctx.Subscription = Subscription;
+		Ctx.SignalEvent = SignalEvent;
+		Ctx.QueryId = Query.id;
+
+		Subscriptions.push_back(Ctx);
+	}
+
+	if (Subscriptions.size() != Config.EventLogs.size())
+	{
+		DestroySubscriptions();
+		return FALSE;
+	}
+
+	HANDLE Thread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)SubscriptionThread, 0, 0, 0);
+
+	if (Thread == 0)
+	{
+		DestroySubscriptions();
+		return FALSE;
+	}
+
+	CloseHandle(Thread);
+	return TRUE;
 }
